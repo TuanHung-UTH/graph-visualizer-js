@@ -2,23 +2,32 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Graph Visualizer — for Course Submission</title>
+  <title>Graph Visualizer — Fixed (labels, clear, Hierholzer)</title>
   <style>
     body { font-family: Arial, sans-serif; margin:0; display:flex; height:100vh; }
-    #left { width:220px; padding:10px; border-right:1px solid #ddd; box-sizing:border-box; }
+    #left { width:240px; padding:10px; border-right:1px solid #ddd; box-sizing:border-box; }
     #canvas-wrap { flex:1; position:relative; background:#fafafa; }
     canvas { background: #fff; display:block; margin:0; width:100%; height:100%; }
     button, select, input { width:100%; margin:6px 0; padding:6px; box-sizing:border-box; }
     .small { width:48%; display:inline-block; }
     #info { font-size:13px; color:#333; margin-top:8px; }
-    #right { width:360px; padding:10px; border-left:1px solid #ddd; box-sizing:border-box; overflow:auto; }
-    pre { background:#f1f1f1; padding:8px; max-height:200px; overflow:auto; }
-    .highlight { stroke: orange; stroke-width:4; }
+    #right { width:380px; padding:10px; border-left:1px solid #ddd; box-sizing:border-box; overflow:auto; }
+    pre { background:#f1f1f1; padding:8px; max-height:200px; overflow:auto; white-space:pre-wrap; }
   </style>
 </head>
 <body>
   <div id="left">
     <h3>Graph Visualizer</h3>
+
+    <label>Label for next node (leave empty => auto)</label>
+    <input id="labelInput" placeholder="e.g. A or 1 or nodeX" />
+
+    <label>Auto label mode</label>
+    <select id="labelMode">
+      <option value="alpha">A, B, C, ...</option>
+      <option value="numeric">1, 2, 3, ...</option>
+    </select>
+
     <div>
       <label>Mode:</label>
       <select id="mode">
@@ -27,6 +36,7 @@
         <option value="select">Select/Move</option>
       </select>
     </div>
+
     <div>
       <label>Graph type:</label>
       <select id="directed">
@@ -34,10 +44,15 @@
         <option value="true">Directed</option>
       </select>
     </div>
+
     <div>
       <label>Weight (for next edge):</label>
       <input id="edgeWeight" type="number" value="1" />
     </div>
+
+    <button id="clearBtn">Clear Graph</button>
+
+    <hr/>
     <button id="bfsBtn">BFS (step)</button>
     <button id="dfsBtn">DFS (step)</button>
     <button id="dijkstraBtn">Dijkstra</button>
@@ -53,6 +68,7 @@
     <button id="toAdjList">Adj List</button>
     <button id="toMatrix">Adj Matrix</button>
     <button id="toEdgeList">Edge List</button>
+
     <div id="info">Click canvas to add nodes. Drag to create edges when mode is Add Edge.</div>
   </div>
 
@@ -64,106 +80,180 @@
     <h4>Output / Representations</h4>
     <div>
       <label>Start node (for searches):</label>
-      <input id="startNode" placeholder="node id (e.g., n1)"/>
+      <input id="startNode" placeholder="node label (e.g., A or 1)"/>
       <label>End node (for shortest path / flow):</label>
-      <input id="endNode" placeholder="node id"/>
+      <input id="endNode" placeholder="node label"/>
     </div>
+
     <div>
       <label>Message:</label>
       <pre id="message"></pre>
     </div>
+
     <div>
       <label>Representation:</label>
       <pre id="rep"></pre>
     </div>
+
     <div>
       <label>Edge Flows (for Ford-Fulkerson):</label>
       <pre id="flows"></pre>
     </div>
+
     <div>
       <label>Controls:</label>
       <button id="stepBtn">Next Step</button>
       <button id="resetColors">Reset Colors</button>
     </div>
+
     <hr/>
     <h4>How to submit</h4>
-    <p>Download the ZIP from the instructor link. This app is a single-page web app; host the folder or open index.html locally.</p>
+    <p>Open this file in browser or host on GitHub Pages. Kèm README & sample graph.</p>
   </div>
 
 <script>
-// Simple graph model and canvas-based visualizer
+// ---------- Setup & state ----------
 const canvas = document.getElementById('canvas');
 const wrap = document.getElementById('canvas-wrap');
-canvas.width = wrap.clientWidth;
-canvas.height = wrap.clientHeight;
-window.addEventListener('resize', ()=>{ canvas.width = wrap.clientWidth; canvas.height = wrap.clientHeight; draw(); });
+function resizeCanvas(){
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  draw();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
 const ctx = canvas.getContext('2d');
-let modeEl = document.getElementById('mode');
-let directedEl = document.getElementById('directed');
-let edgeWeightEl = document.getElementById('edgeWeight');
-let message = document.getElementById('message');
-let rep = document.getElementById('rep');
-let flowsPre = document.getElementById('flows');
+ctx.font = "14px Arial";
+
+const modeEl = document.getElementById('mode');
+const directedEl = document.getElementById('directed');
+const edgeWeightEl = document.getElementById('edgeWeight');
+const message = document.getElementById('message');
+const rep = document.getElementById('rep');
+const flowsPre = document.getElementById('flows');
+const labelInput = document.getElementById('labelInput');
+const labelModeEl = document.getElementById('labelMode');
 
 let state = {
-  nodes: [], edges: [], directed:false,
-  nextId: 1
+  nodes: [],    // {id: label, x, y, r, color}
+  edges: [],    // {id, from, to, weight, flow}
+  directed: false,
+  nextAutoAlpha: 0,
+  nextAutoNum: 1,
+  nextEdgeId: 1
 };
 
-function resetState(){ state = { nodes:[], edges:[], directed:false, nextId:1}; }
+function resetState(){
+  state = { nodes:[], edges:[], directed:false, nextAutoAlpha:0, nextAutoNum:1, nextEdgeId:1 };
+  updateRep(); draw(); message.textContent='Cleared';
+}
 
-function addNode(x,y){
-  const id='n'+(state.nextId++);
-  state.nodes.push({id,x,y,r:18,color:'#66aaff'});
-  draw();
-  updateRep();
+// ---------- Helper for node labels ----------
+function getNextAutoLabel(){
+  const mode = labelModeEl.value;
+  if(mode === 'numeric'){
+    return String(state.nextAutoNum++);
+  }else{
+    // alpha: A..Z, A1, A2...
+    const idx = state.nextAutoAlpha++;
+    const base = 26;
+    let s = '';
+    let v = idx;
+    // create sequence A, B, ..., Z, A1, B1, ...
+    if(v < base){
+      s = String.fromCharCode(65 + v);
+    } else {
+      const rem = v % base;
+      const q = Math.floor(v / base) - 1;
+      s = String.fromCharCode(65 + rem) + (q+1);
+    }
+    return s;
+  }
+}
+
+function ensureUniqueLabel(label){
+  let id = label;
+  let i = 1;
+  while(state.nodes.find(n=>n.id === id)){
+    id = label + '_' + i;
+    i++;
+  }
+  return id;
+}
+
+// ---------- Node & edge operations ----------
+function addNodeAt(x,y){
+  let label = labelInput.value.trim();
+  if(label === ''){
+    label = getNextAutoLabel();
+  }
+  label = ensureUniqueLabel(label);
+  state.nodes.push({ id: label, x, y, r:18, color:'#66aaff' });
+  labelInput.value = ''; // clear input after use
+  draw(); updateRep();
 }
 
 function nodeAt(x,y){
   return state.nodes.find(n=>{
-    const dx=n.x-x, dy=n.y-y;
-    return Math.sqrt(dx*dx+dy*dy) <= n.r;
+    const dx = n.x - x, dy = n.y - y;
+    return Math.sqrt(dx*dx + dy*dy) <= n.r;
   });
 }
 
-let dragging=null, creatingEdge=null;
-canvas.onmousedown = (e)=>{
-  const rect=canvas.getBoundingClientRect();
-  const x=e.clientX-rect.left, y=e.clientY-rect.top;
-  const mode=modeEl.value;
-  if(mode==='addNode'){ addNode(x,y); }
-  else if(mode==='select'){
-    const n=nodeAt(x,y);
-    if(n){ dragging={node:n,ox:x-n.x,oy:y-n.y}; }
-  } else if(mode==='addEdge'){
-    const n=nodeAt(x,y);
-    if(n){ creatingEdge={from:n, x, y}; }
+function addEdge(fromId, toId, weight){
+  const id = 'e' + (state.nextEdgeId++);
+  state.edges.push({ id, from: fromId, to: toId, weight: Number(weight || 1), flow: 0 });
+  draw(); updateRep();
+}
+
+// ---------- Mouse interactions ----------
+let dragging = null;
+let creatingEdge = null;
+
+canvas.onmousedown = (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const mode = modeEl.value;
+  if(mode === 'addNode'){
+    addNodeAt(x,y);
+  } else if(mode === 'select'){
+    const n = nodeAt(x,y);
+    if(n){ dragging = { node: n, ox: x - n.x, oy: y - n.y }; }
+  } else if(mode === 'addEdge'){
+    const n = nodeAt(x,y);
+    if(n){ creatingEdge = { from: n, x, y }; }
   }
 };
-canvas.onmousemove = (e)=>{
-  const rect=canvas.getBoundingClientRect();
-  const x=e.clientX-rect.left, y=e.clientY-rect.top;
-  if(dragging){ dragging.node.x = x - dragging.ox; dragging.node.y = y - dragging.oy; draw(); updateRep(); }
-  if(creatingEdge){ creatingEdge.x=x; creatingEdge.y=y; draw(); }
+canvas.onmousemove = (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if(dragging){
+    dragging.node.x = x - dragging.ox;
+    dragging.node.y = y - dragging.oy;
+    draw(); updateRep();
+  }
+  if(creatingEdge){
+    creatingEdge.x = x; creatingEdge.y = y; draw();
+  }
 };
-canvas.onmouseup = (e)=>{
-  const rect=canvas.getBoundingClientRect();
-  const x=e.clientX-rect.left, y=e.clientY-rect.top;
-  if(dragging){ dragging=null; }
+canvas.onmouseup = (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if(dragging){ dragging = null; }
   if(creatingEdge){
     const target = nodeAt(x,y);
-    if(target && target !== creatingEdge.from){
-      const w = Number(edgeWeightEl.value) || 1;
-      state.edges.push({id:'e'+(state.edges.length+1), from:creatingEdge.from.id, to:target.id, weight:w, flow:0});
-      state.directed = (directedEl.value==='true');
-      draw();
-      updateRep();
+    if(target && target.id !== creatingEdge.from.id){
+      // add edge using labels as ids
+      addEdge(creatingEdge.from.id, target.id, edgeWeightEl.value || 1);
+      state.directed = (directedEl.value === 'true');
     }
-    creatingEdge=null; draw();
+    creatingEdge = null;
+    draw();
   }
 };
 
+// ---------- Drawing ----------
 function draw(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // edges
@@ -172,253 +262,342 @@ function draw(){
     const b = state.nodes.find(n=>n.id===e.to);
     if(!a||!b) return;
     ctx.beginPath();
-    ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
-    ctx.lineWidth = e._highlight?4:2;
+    ctx.moveTo(a.x,a.y);
+    ctx.lineTo(b.x,b.y);
+    ctx.lineWidth = e._highlight ? 4 : 2;
     ctx.strokeStyle = e._color || '#333';
     ctx.stroke();
-    // arrow
+
+    // arrow for directed
     if(state.directed){
-      const dx=b.x-a.x, dy=b.y-a.y;
-      const ang=Math.atan2(dy,dx);
-      const ax=b.x-12*Math.cos(ang), ay=b.y-12*Math.sin(ang);
-      ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(ax-8*Math.cos(ang-Math.PI/6), ay-8*Math.sin(ang-Math.PI/6));
-      ctx.lineTo(ax-8*Math.cos(ang+Math.PI/6), ay-8*Math.sin(ang+Math.PI/6));
-      ctx.closePath(); ctx.fillStyle = e._color || '#333'; ctx.fill();
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const ang = Math.atan2(dy,dx);
+      const ax = b.x - 12*Math.cos(ang), ay = b.y - 12*Math.sin(ang);
+      ctx.beginPath();
+      ctx.moveTo(ax,ay);
+      ctx.lineTo(ax - 8*Math.cos(ang - Math.PI/6), ay - 8*Math.sin(ang - Math.PI/6));
+      ctx.lineTo(ax - 8*Math.cos(ang + Math.PI/6), ay - 8*Math.sin(ang + Math.PI/6));
+      ctx.closePath();
+      ctx.fillStyle = e._color || '#333';
+      ctx.fill();
     }
-    // weight
-    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
-    ctx.fillStyle='#000'; ctx.fillText(e.weight, mx+6, my+6);
+
+    // weight label
+    const mx = (a.x + b.x)/2, my = (a.y + b.y)/2;
+    ctx.fillStyle = '#000';
+    ctx.fillText(String(e.weight), mx + 6, my + 6);
   });
-  // provisional edge
+
+  // provisional edge while dragging
   if(creatingEdge){
-    ctx.beginPath(); ctx.moveTo(creatingEdge.from.x, creatingEdge.from.y); ctx.lineTo(creatingEdge.x, creatingEdge.y); ctx.strokeStyle='#999'; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(creatingEdge.from.x, creatingEdge.from.y);
+    ctx.lineTo(creatingEdge.x, creatingEdge.y);
+    ctx.strokeStyle = '#999';
+    ctx.stroke();
   }
+
   // nodes
   state.nodes.forEach(n=>{
     ctx.beginPath();
     ctx.fillStyle = n.color || '#66aaff';
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 2;
-    ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+    ctx.arc(n.x, n.y, n.r, 0, Math.PI*2);
     ctx.fill(); ctx.stroke();
-    ctx.fillStyle='#000'; ctx.fillText(n.id, n.x-6, n.y+4);
+    ctx.fillStyle = '#000';
+    ctx.fillText(n.id, n.x - (ctx.measureText(n.id).width/2), n.y + 5);
   });
 }
 
+// ---------- Representations update ----------
 function updateRep(){
-  // adjacency list
   const adj = {};
-  state.nodes.forEach(n=> adj[n.id]=[]);
-  state.edges.forEach(e=>{
-    adj[e.from].push({to:e.to, w:e.weight});
-    if(!state.directed) adj[e.to].push({to:e.from, w:e.weight});
+  state.nodes.forEach(n => adj[n.id] = []);
+  state.edges.forEach(e => {
+    adj[e.from].push({ to: e.to, w: e.weight });
+    if(!state.directed) adj[e.to].push({ to: e.from, w: e.weight });
   });
-  rep.textContent = "Adjacency list:\\n" + JSON.stringify(adj, null, 2);
+  rep.textContent = "Adjacency list:\n" + JSON.stringify(adj, null, 2);
 }
 
-// Utilities: build adjacency for algorithms
+// build adjacency for algorithms
 function buildAdjWeighted(directed){
   const adj = {};
-  state.nodes.forEach(n=> adj[n.id]=[]);
-  state.edges.forEach(e=>{
-    adj[e.from].push({to:e.to, w: Number(e.weight), id:e.id});
-    if(!directed) adj[e.to].push({to:e.from, w: Number(e.weight), id:e.id});
+  state.nodes.forEach(n => adj[n.id] = []);
+  state.edges.forEach(e => {
+    adj[e.from].push({ to: e.to, w: Number(e.weight), id: e.id });
+    if(!directed) adj[e.to].push({ to: e.from, w: Number(e.weight), id: e.id });
   });
   return adj;
 }
 
-// BFS/DFS visualization state
-let algoSteps = [], algoStepIndex=0;
-document.getElementById('bfsBtn').onclick = ()=>{
+// ---------- BFS/DFS visualization ----------
+let algoSteps = [], algoStepIndex = 0;
+document.getElementById('bfsBtn').onclick = () => {
   const start = document.getElementById('startNode').value || (state.nodes[0] && state.nodes[0].id);
-  if(!start){ message.textContent='No start node'; return; }
+  if(!start){ message.textContent = 'No start node'; return; }
   const adj = buildAdjWeighted(state.directed);
-  const visited = new Set(); const q=[start];
-  algoSteps=[]; algoStepIndex=0;
+  const visited = new Set();
+  const q = [start];
+  algoSteps = []; algoStepIndex = 0;
   while(q.length){
-    const u=q.shift();
+    const u = q.shift();
     if(visited.has(u)) continue;
     visited.add(u);
-    algoSteps.push({type:'visit', node:u});
-    for(const v of adj[u]) if(!visited.has(v.to)) { q.push(v.to); algoSteps.push({type:'edge', from:u, to:v.to}); }
+    algoSteps.push({ type:'visit', node:u });
+    for(const v of adj[u]) if(!visited.has(v.to)){ q.push(v.to); algoSteps.push({ type:'edge', from:u, to:v.to }); }
   }
-  message.textContent = 'BFS prepared: '+algoSteps.length+' steps. Click Next Step.';
+  message.textContent = 'BFS prepared: ' + algoSteps.length + ' steps. Click Next Step.';
 };
-document.getElementById('dfsBtn').onclick = ()=>{
+
+document.getElementById('dfsBtn').onclick = () => {
   const start = document.getElementById('startNode').value || (state.nodes[0] && state.nodes[0].id);
-  if(!start){ message.textContent='No start node'; return; }
+  if(!start){ message.textContent = 'No start node'; return; }
   const adj = buildAdjWeighted(state.directed);
-  const visited=new Set(); algoSteps=[]; algoStepIndex=0;
+  const visited = new Set();
+  algoSteps = []; algoStepIndex = 0;
   function dfs(u){
-    visited.add(u); algoSteps.push({type:'visit', node:u});
+    visited.add(u); algoSteps.push({ type:'visit', node:u });
     for(const v of adj[u]){
-      if(!visited.has(v.to)){ algoSteps.push({type:'edge', from:u, to:v.to}); dfs(v.to); }
+      if(!visited.has(v.to)){ algoSteps.push({ type:'edge', from:u, to:v.to }); dfs(v.to); }
     }
   }
   dfs(start);
-  message.textContent = 'DFS prepared: '+algoSteps.length+' steps. Click Next Step.';
+  message.textContent = 'DFS prepared: ' + algoSteps.length + ' steps. Click Next Step.';
 };
-document.getElementById('stepBtn').onclick = ()=>{
+
+document.getElementById('stepBtn').onclick = () => {
   if(algoStepIndex >= algoSteps.length){ message.textContent='No more steps'; return; }
   const s = algoSteps[algoStepIndex++];
-  resetColors();
-  if(s.type==='visit'){ const n = state.nodes.find(x=>x.id===s.node); if(n) n.color='#ffcc66'; message.textContent='Visiting '+s.node; }
-  if(s.type==='edge'){ const e = state.edges.find(x=>x.from===s.from && x.to===s.to); if(e) e._color='#ff6600'; message.textContent='Edge '+s.from+'->'+s.to; }
+  resetColors(false);
+  if(s.type === 'visit'){ const n = state.nodes.find(x => x.id === s.node); if(n) n.color = '#ffcc66'; message.textContent = 'Visiting ' + s.node; }
+  if(s.type === 'edge'){ const e = state.edges.find(x => x.from === s.from && x.to === s.to) || state.edges.find(x => x.from === s.to && x.to === s.from); if(e) e._color = '#ff6600'; message.textContent = 'Edge ' + s.from + ' -> ' + s.to; }
   draw();
 };
 
-function resetColors(){
-  state.nodes.forEach(n=> n.color='#66aaff');
-  state.edges.forEach(e=> { e._color=null; e._highlight=false; });
+// reset colors; optionally clear messages
+function resetColors(clearMessage=true){
+  state.nodes.forEach(n => n.color = '#66aaff');
+  state.edges.forEach(e => { e._color = null; e._highlight = false; });
   draw();
+  if(clearMessage) message.textContent = '';
 }
-document.getElementById('resetColors').onclick = ()=>{ resetColors(); message.textContent='Colors reset'; };
+document.getElementById('resetColors').onclick = ()=>{ resetColors(true); message.textContent='Colors reset'; };
 
-
-// Dijkstra
-document.getElementById('dijkstraBtn').onclick = ()=>{
+// ---------- Dijkstra ----------
+document.getElementById('dijkstraBtn').onclick = () => {
   const start = document.getElementById('startNode').value;
   const end = document.getElementById('endNode').value;
   if(!start || !end){ message.textContent='Please provide start and end'; return; }
   const adj = buildAdjWeighted(state.directed);
-  const dist = {}; const prev={};
-  state.nodes.forEach(n=>{ dist[n.id]=Infinity; prev[n.id]=null; });
-  dist[start]=0;
+  const dist = {}, prev = {};
+  state.nodes.forEach(n=>{ dist[n.id] = Infinity; prev[n.id] = null; });
+  dist[start] = 0;
   const Q = new Set(state.nodes.map(n=>n.id));
   while(Q.size){
-    let u=null, best=Infinity;
-    Q.forEach(x=>{ if(dist[x]<best){ best=dist[x]; u=x; } });
-    if(u===null||dist[u]===Infinity) break;
+    let u = null, best = Infinity;
+    Q.forEach(x=>{ if(dist[x] < best){ best = dist[x]; u = x; } });
+    if(u === null || dist[u] === Infinity) break;
     Q.delete(u);
-    state.nodes.forEach(n=>{ if(n.id===u) n.color='#ffcc66'; });
+    // color extraction of u
+    const nu = state.nodes.find(n=>n.id===u);
+    if(nu) nu.color = '#ffcc66';
     for(const v of adj[u]){
       const alt = dist[u] + v.w;
-      if(alt < dist[v.to]){ dist[v.to]=alt; prev[v.to]=u; }
+      if(alt < dist[v.to]){ dist[v.to] = alt; prev[v.to] = u; }
     }
   }
-  // reconstruct path
-  const path=[]; let cur=end;
-  while(cur){ path.push(cur); cur=prev[cur]; }
+  const path = []; let cur = end;
+  if(dist[end] === Infinity){ message.textContent = 'No path to ' + end; }
+  while(cur){ path.push(cur); cur = prev[cur]; if(cur === null) break; }
   path.reverse();
-  // highlight path edges
-  state.edges.forEach(e=> e._highlight=false);
+  state.edges.forEach(e => e._highlight = false);
   for(let i=0;i<path.length-1;i++){
-    const ef = state.edges.find(x=> x.from===path[i]&& x.to===path[i+1]);
-    const eb = state.edges.find(x=> x.from===path[i+1] && x.to===path[i]); // if undirected
-    const e = ef||eb;
-    if(e) e._highlight=true;
+    const ef = state.edges.find(x => x.from === path[i] && x.to === path[i+1]);
+    const eb = state.edges.find(x => x.from === path[i+1] && x.to === path[i]); // undirected
+    const e = ef || eb;
+    if(e) e._highlight = true;
   }
   draw();
-  message.textContent = 'Dijkstra: dist to '+end+' = '+(dist[end]===Infinity?'∞':dist[end])+' Path: '+(dist[end]===Infinity? 'none':path.join(' -> '));
+  message.textContent = 'Dijkstra: dist to ' + end + ' = ' + (dist[end]===Infinity ? '∞' : dist[end]) + ' Path: ' + (dist[end]===Infinity ? 'none' : path.join(' -> '));
 };
 
-// Kruskal (MST)
-document.getElementById('kruskalBtn').onclick = ()=>{
-  const edges = state.edges.map(e=> ({...e}));
-  // sort by weight
-  edges.sort((a,b)=>a.weight-b.weight);
-  // union-find
+// ---------- Kruskal ----------
+document.getElementById('kruskalBtn').onclick = () => {
+  // Works only properly for undirected graphs
+  if(state.directed){ message.textContent = 'Kruskal: graph directed — treat as undirected for MST'; }
+  const edges = state.edges.map(e => ({ ...e }));
+  edges.sort((a,b)=>a.weight - b.weight);
   const p = {};
-  state.nodes.forEach(n=> p[n.id]=n.id);
-  function find(a){ return p[a]===a?a:(p[a]=find(p[a])); }
-  function union(a,b){ p[find(a)]=find(b); }
-  const chosen=[];
-  edges.forEach(e=>{
-    const u=e.from, v=e.to;
-    if(find(u)!==find(v)){ union(u,v); chosen.push(e); }
+  state.nodes.forEach(n => p[n.id] = n.id);
+  function find(a){ return p[a] === a ? a : (p[a] = find(p[a])); }
+  function union(a,b){ p[find(a)] = find(b); }
+  const chosen = [];
+  edges.forEach(e => {
+    const u = e.from, v = e.to;
+    if(find(u) !== find(v)){ union(u,v); chosen.push(e); }
   });
-  state.edges.forEach(e=> e._color='#ccc'); chosen.forEach(e=>{
-    const orig = state.edges.find(x=>x.id===e.id);
-    if(orig) orig._color='#00cc66';
+  state.edges.forEach(e => e._color = '#ccc');
+  chosen.forEach(e => {
+    const orig = state.edges.find(x => x.id === e.id);
+    if(orig) orig._color = '#00cc66';
   });
   draw();
-  message.textContent = 'Kruskal chosen '+chosen.length+' edges.';
+  message.textContent = 'Kruskal chosen ' + chosen.length + ' edges.';
 };
 
-// Bipartite check
-document.getElementById('bipartiteBtn').onclick = ()=>{
+// ---------- Bipartite check ----------
+document.getElementById('bipartiteBtn').onclick = () => {
   const adj = buildAdjWeighted(state.directed);
-  const color = {}; let ok=true;
+  const color = {}, ok = { val: true };
   for(const n of state.nodes){
     if(!(n.id in color)){
-      const q=[n.id]; color[n.id]=0;
+      const q = [n.id]; color[n.id] = 0;
       while(q.length){
-        const u=q.shift();
+        const u = q.shift();
         for(const v of adj[u]){
-          if(!(v.to in color)){ color[v.to]=1-color[u]; q.push(v.to); }
-          else if(color[v.to]===color[u]) ok=false;
+          if(!(v.to in color)){ color[v.to] = 1 - color[u]; q.push(v.to); }
+          else if(color[v.to] === color[u]) ok.val = false;
         }
       }
     }
   }
-  if(!ok){ message.textContent='Graph is NOT bipartite'; resetColors(); return; }
-  // color nodes
-  state.nodes.forEach(n=> n.color = color[n.id]===0? '#88ee88' : '#ff8888' );
+  if(!ok.val){ message.textContent = 'Graph is NOT bipartite'; resetColors(); return; }
+  state.nodes.forEach(n => n.color = (color[n.id] === 0) ? '#88ee88' : '#ff8888');
   draw();
   message.textContent = 'Graph is bipartite. Colored two sets.';
 };
 
-// Hierholzer (Eulerian circuit) — for undirected graphs
-document.getElementById('hierholzerBtn').onclick = ()=>{
-  // build multigraph adjacency of edge ids
+// ---------- Hierholzer (fixed) ----------
+document.getElementById('hierholzerBtn').onclick = () => {
+  if(state.nodes.length === 0){ message.textContent = 'No nodes'; return; }
+  const directed = (directedEl.value === 'true');
+  // build adjacency with edge objects (multigraph support)
   const adj = {};
-  state.nodes.forEach(n=> adj[n.id]=[]);
-  state.edges.forEach(e=>{
-    adj[e.from].push({to:e.to, id:e.id});
-    adj[e.to].push({to:e.from, id:e.id});
-  });
-  // check all degrees even
-  for(const k in adj) if(adj[k].length %2 !==0){ message.textContent='No Eulerian circuit (degree not even)'; return; }
-  // Hierholzer
-  const stack=[]; const circuit=[];
-  if(state.nodes.length===0){ message.textContent='No nodes'; return; }
-  const start = state.nodes[0].id;
-  stack.push(start);
-  const used = new Set();
-  while(stack.length){
-    const v = stack[stack.length-1];
-    while(adj[v] && adj[v].length && adj[v].length>0 && used.size<state.edges.length){
-      const e = adj[v].pop();
-      if(used.has(e.id)) continue;
-      used.add(e.id);
-      // remove counterpart edge
-      const idx = adj[e.to].findIndex(x=>x.id===e.id);
-      if(idx>=0) adj[e.to].splice(idx,1);
-      stack.push(e.to);
-      return; // to keep UI responsive — but for simplicity we'll continue
+  const inDeg = {}, outDeg = {};
+  state.nodes.forEach(n => { adj[n.id] = []; inDeg[n.id]=0; outDeg[n.id]=0; });
+  state.edges.forEach(e => {
+    adj[e.from].push({ to: e.to, id: e.id });
+    outDeg[e.from] = (outDeg[e.from] || 0) + 1;
+    inDeg[e.to] = (inDeg[e.to] || 0) + 1;
+    if(!directed){
+      adj[e.to].push({ to: e.from, id: e.id }); // same id appears twice
+      outDeg[e.to] = (outDeg[e.to] || 0); // keep deg counts symmetric for undirected
+      inDeg[e.from] = (inDeg[e.from] || 0);
     }
-    circuit.push(stack.pop());
+  });
+
+  // check Eulerian conditions
+  if(directed){
+    // for circuit: every node inDeg == outDeg
+    for(const v of state.nodes){
+      if((inDeg[v.id]||0) !== (outDeg[v.id]||0)){ message.textContent = 'Directed graph not Eulerian (inDeg != outDeg)'; return; }
+    }
+  } else {
+    // for circuit: all degrees even
+    for(const v of state.nodes){
+      if((adj[v.id].length % 2) !== 0){ message.textContent = 'Undirected graph not Eulerian (some vertex has odd degree)'; return; }
+    }
   }
-  message.textContent = 'Eulerian circuit (partial): '+circuit.join(' -> ');
+
+  // check connectedness on underlying undirected graph (consider only nodes with degree>0)
+  const nodesWithDeg = state.nodes.filter(n => adj[n.id].length > 0).map(n => n.id);
+  if(nodesWithDeg.length === 0){ message.textContent = 'Graph has no edges'; return; }
+  const vis = new Set();
+  const stackConn = [nodesWithDeg[0]];
+  while(stackConn.length){
+    const u = stackConn.pop();
+    if(vis.has(u)) continue;
+    vis.add(u);
+    for(const e of adj[u]) if(!vis.has(e.to)) stackConn.push(e.to);
+  }
+  if(vis.size !== nodesWithDeg.length){ message.textContent = 'Graph is not connected (ignoring isolated vertices)'; return; }
+
+  // Hierholzer algorithm (iterative)
+  const usedEdge = new Set();
+  // we need adjacency pointers (index) to traverse quickly
+  const adjIndex = {};
+  for(const v of Object.keys(adj)) adjIndex[v] = 0;
+
+  const currStack = [];
+  const circuit = [];
+  const start = nodesWithDeg[0];
+  currStack.push(start);
+
+  while(currStack.length){
+    const v = currStack[currStack.length - 1];
+    // find next unused edge from v
+    let found = false;
+    while(adjIndex[v] < adj[v].length){
+      const e = adj[v][adjIndex[v]];
+      adjIndex[v] += 1;
+      if(!usedEdge.has(e.id)){
+        usedEdge.add(e.id);
+        // push neighbor
+        currStack.push(e.to);
+        found = true;
+        break;
+      }
+    }
+    if(!found){
+      // no more edges; backtrack
+      circuit.push(currStack.pop());
+    }
+  }
+
+  // circuit contains vertices in reverse order
+  circuit.reverse();
+
+  // verify that we've used all edges
+  // For undirected each edge id should have been used once (we marked by id)
+  if(usedEdge.size !== state.edges.length){
+    message.textContent = 'Failed to find Eulerian circuit (used edges ' + usedEdge.size + ' of ' + state.edges.length + ')';
+    return;
+  }
+
+  // highlight edges along circuit (sequential pairs)
+  state.edges.forEach(e => { e._color = '#ccc'; e._highlight = false; });
+  for(let i=0;i<circuit.length - 1;i++){
+    const u = circuit[i], v = circuit[i+1];
+    // find an unused matching edge in state.edges (we mark first match)
+    const e1 = state.edges.find(x => !x._highlight && x.from === u && x.to === v);
+    const e2 = state.edges.find(x => !x._highlight && x.from === v && x.to === u);
+    const e = e1 || e2;
+    if(e) { e._highlight = true; e._color = '#ff6600'; }
+  }
+  draw();
+  message.textContent = 'Eulerian circuit found: ' + circuit.join(' -> ');
 };
 
-// Ford-Fulkerson (Edmonds-Karp)
-document.getElementById('fordBtn').onclick = ()=>{
+// ---------- Ford-Fulkerson (Edmonds-Karp) ----------
+document.getElementById('fordBtn').onclick = () => {
   const source = document.getElementById('startNode').value;
   const sink = document.getElementById('endNode').value;
   if(!source || !sink){ message.textContent='Provide source and sink'; return; }
-  // build capacity matrix
-  const nodes = state.nodes.map(n=>n.id);
-  const index = {}; nodes.forEach((v,i)=>index[v]=i);
+  const nodes = state.nodes.map(n => n.id);
+  const idx = {}; nodes.forEach((v,i)=>idx[v]=i);
   const N = nodes.length;
   const capacity = Array.from({length:N}, ()=> Array(N).fill(0));
-  state.edges.forEach(e=>{
-    capacity[index[e.from]][index[e.to]] = Number(e.weight);
-    if(!state.directed) capacity[index[e.to]][index[e.from]] = Number(e.weight);
+  state.edges.forEach(e => {
+    capacity[idx[e.from]][idx[e.to]] = Number(e.weight);
+    if(!state.directed) capacity[idx[e.to]][idx[e.from]] = Number(e.weight);
   });
   // Edmonds-Karp
-  let maxflow=0;
+  let maxflow = 0;
   const parent = Array(N).fill(-1);
   function bfs(){
     parent.fill(-1);
-    const q=[index[source]]; parent[index[source]] = -2;
-    const flow = Array(N).fill(0); flow[index[source]] = Infinity;
+    const q = [idx[source]];
+    parent[idx[source]] = -2;
+    const flow = Array(N).fill(0); flow[idx[source]] = Infinity;
     while(q.length){
-      const u=q.shift();
-      for(let v=0;v<N;v++){
-        if(parent[v]===-1 && capacity[u][v]>0){
-          parent[v]=u; flow[v]=Math.min(flow[u], capacity[u][v] || Infinity);
-          if(v===index[sink]) return flow[v];
+      const u = q.shift();
+      for(let v=0; v<N; v++){
+        if(parent[v] === -1 && capacity[u][v] > 0){
+          parent[v] = u;
+          flow[v] = Math.min(flow[u], capacity[u][v] || Infinity);
+          if(v === idx[sink]) return flow[v];
           q.push(v);
         }
       }
@@ -426,64 +605,79 @@ document.getElementById('fordBtn').onclick = ()=>{
     return 0;
   }
   let new_flow;
-  while((new_flow=bfs())>0){
+  while((new_flow = bfs()) > 0){
     maxflow += new_flow;
-    let cur=index[sink];
-    while(cur!==index[source]){
+    let cur = idx[sink];
+    while(cur !== idx[source]){
       const prev = parent[cur];
       capacity[prev][cur] -= new_flow;
       capacity[cur][prev] += new_flow;
       cur = prev;
     }
   }
-  // show flows on original edges as (cap - residual)
-  flowsPre.textContent = 'Max flow = '+maxflow+' (may be approximate)\\nResidual capacities shown in console';
-  message.textContent = 'Max flow (approx): '+maxflow;
+  flowsPre.textContent = 'Max flow = ' + maxflow;
+  message.textContent = 'Max flow (Edmonds-Karp): ' + maxflow;
 };
 
-// Save/Load JSON
-document.getElementById('saveBtn').onclick = ()=>{
-  const data = { nodes: state.nodes, edges: state.edges, directed: (directedEl.value==='true') };
-  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+// ---------- Save / Load ----------
+document.getElementById('saveBtn').onclick = () => {
+  const data = { nodes: state.nodes, edges: state.edges, directed: (directedEl.value === 'true') };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href=url; a.download='graph.json'; a.click();
+  const a = document.createElement('a'); a.href = url; a.download = 'graph.json'; a.click();
 };
-document.getElementById('loadBtn').onclick = ()=> document.getElementById('fileInput').click();
-document.getElementById('fileInput').onchange = (e)=>{
+document.getElementById('loadBtn').onclick = () => document.getElementById('fileInput').click();
+document.getElementById('fileInput').onchange = (e) => {
   const f = e.target.files[0]; if(!f) return;
   const reader = new FileReader();
-  reader.onload = ()=> {
-    const data = JSON.parse(reader.result);
-    state.nodes = data.nodes || []; state.edges = data.edges || []; state.directed = !!data.directed;
-    directedEl.value = state.directed?'true':'false';
-    state.nextId = state.nodes.length+1;
-    draw(); updateRep(); message.textContent='Graph loaded';
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      state.nodes = data.nodes || [];
+      state.edges = data.edges || [];
+      state.directed = !!data.directed;
+      directedEl.value = state.directed ? 'true' : 'false';
+      // set next ids reasonably
+      state.nextEdgeId = state.edges.length + 1;
+      // reset auto counters to avoid duplicates
+      state.nextAutoAlpha = 0;
+      state.nextAutoNum = state.nodes.length + 1;
+      draw(); updateRep(); message.textContent = 'Graph loaded';
+    } catch(err){
+      message.textContent = 'Load error: ' + err;
+    }
   };
   reader.readAsText(f);
 };
 
-// Conversions
-document.getElementById('toAdjList').onclick = ()=>{
+// ---------- Conversions ----------
+document.getElementById('toAdjList').onclick = () => {
   const adj = buildAdjWeighted(state.directed);
   rep.textContent = JSON.stringify(adj, null, 2);
 };
-document.getElementById('toMatrix').onclick = ()=>{
-  const nodes = state.nodes.map(n=>n.id);
+document.getElementById('toMatrix').onclick = () => {
+  const nodes = state.nodes.map(n => n.id);
   const idx = {}; nodes.forEach((v,i)=>idx[v]=i);
   const N = nodes.length;
   const mat = Array.from({length:N}, ()=> Array(N).fill(0));
-  state.edges.forEach(e=>{
+  state.edges.forEach(e => {
     mat[idx[e.from]][idx[e.to]] = Number(e.weight);
     if(!state.directed) mat[idx[e.to]][idx[e.from]] = Number(e.weight);
   });
-  rep.textContent = 'Nodes: '+JSON.stringify(nodes)+ '\\nMatrix:\\n' + JSON.stringify(mat, null, 2);
+  rep.textContent = 'Nodes: ' + JSON.stringify(nodes) + '\nMatrix:\n' + JSON.stringify(mat, null, 2);
 };
-document.getElementById('toEdgeList').onclick = ()=>{
+document.getElementById('toEdgeList').onclick = () => {
   rep.textContent = JSON.stringify(state.edges, null, 2);
 };
 
-// initial draw
-draw(); updateRep();
+// ---------- Clear button ----------
+document.getElementById('clearBtn').onclick = () => { resetState(); };
+
+// ---------- Initial ----------
+resetState();
+draw();
+updateRep();
+
 </script>
 </body>
 </html>
