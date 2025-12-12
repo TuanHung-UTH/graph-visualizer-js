@@ -1,4 +1,4 @@
-// main.js - Graph Visualizer (vanilla JS)
+// main.js - Graph Visualizer (vanilla JS) - Optimized Version
 // Core features implemented:
 // - Add Node (click), Add Edge (drag), Select
 // - Export / Import JSON
@@ -43,115 +43,213 @@ const fordFulkBtn = document.getElementById('fordFulkBtn');
 const output = document.getElementById('output');
 const selectedInfo = document.getElementById('selectedInfo');
 
-function resizeSVG(){
-  svg.setAttribute('viewBox', `0 0 ${Math.max(800,w())} ${Math.max(500,h())}`);
+// Cache DOM elements for performance
+let visualizationInterval = null;
+
+function resizeSVG() {
+  svg.setAttribute('viewBox', `0 0 ${Math.max(800, w())} ${Math.max(500, h())}`);
 }
 window.addEventListener('resize', resizeSVG);
 resizeSVG();
 
 // helpers
-function idNode() { nodeCounter++; return 'N'+nodeCounter; }
-function idEdge() { edgeCounter++; return 'E'+edgeCounter; }
+function idNode() { nodeCounter++; return 'N' + nodeCounter; }
+function idEdge() { edgeCounter++; return 'E' + edgeCounter; }
 
-function redraw(){
-  // clear
-  while(svg.firstChild) svg.removeChild(svg.firstChild);
+function clearHighlights() {
+  nodes.forEach(n => n._active = false);
+  edges.forEach(e => {
+    e._highlight = false;
+    e.flow = 0;
+  });
+}
+
+function redraw() {
+  // Clear previous visualization
+  if (visualizationInterval) {
+    clearInterval(visualizationInterval);
+    visualizationInterval = null;
+  }
+  
+  // clear SVG
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
 
   // draw edges
-  edges.forEach(e=>{
-    const a = nodes.find(n=>n.id===e.from);
-    const b = nodes.find(n=>n.id===e.to);
-    if(!a||!b) return;
-    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-    line.setAttribute('x1',a.x); line.setAttribute('y1',a.y);
-    line.setAttribute('x2',b.x); line.setAttribute('y2',b.y);
+  edges.forEach(e => {
+    const a = nodes.find(n => n.id === e.from);
+    const b = nodes.find(n => n.id === e.to);
+    if (!a || !b) return;
+    
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', a.x);
+    line.setAttribute('y1', a.y);
+    line.setAttribute('x2', b.x);
+    line.setAttribute('y2', b.y);
     line.classList.add('edge');
-    if(e._highlight) line.classList.add('highlight');
-    if(e.flow && e.flow>0) line.classList.add('flow');
+    if (e._highlight) line.classList.add('highlight');
+    if (e.flow && e.flow > 0) line.classList.add('flow');
     svg.appendChild(line);
 
-    if(e.weight!=null){
-      const tx = (a.x+b.x)/2; const ty = (a.y+b.y)/2 - 8;
-      const text = document.createElementNS('http://www.w3.org/2000/svg','text');
-      text.setAttribute('x',tx); text.setAttribute('y',ty); text.setAttribute('text-anchor','middle');
+    // Show weight/capacity
+    if (e.weight != null) {
+      const tx = (a.x + b.x) / 2;
+      const ty = (a.y + b.y) / 2 - 8;
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', tx);
+      text.setAttribute('y', ty);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('class', 'edge-label');
       text.textContent = e.weight;
       svg.appendChild(text);
     }
-    if(e.directed){
+
+    // Show flow if exists
+    if (e.flow && e.flow > 0 && e.flow !== e.weight) {
+      const tx = (a.x + b.x) / 2;
+      const ty = (a.y + b.y) / 2 + 12;
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', tx);
+      text.setAttribute('y', ty);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('class', 'flow-label');
+      text.textContent = `(${e.flow})`;
+      svg.appendChild(text);
+    }
+
+    // Directed arrow
+    if (e.directed) {
       const dx = (b.x - a.x), dy = (b.y - a.y);
-      const len = Math.sqrt(dx*dx+dy*dy);
-      const ux = dx/len, uy = dy/len;
-      const px = b.x - ux*14, py = b.y - uy*14;
-      const arrow = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const ux = dx / len, uy = dy / len;
+      const px = b.x - ux * 14, py = b.y - uy * 14;
+      const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
       const size = 6;
       const p1 = `${px},${py}`;
-      const p2 = `${px - uy*size - ux*size},${py + ux*size - uy*size}`;
-      const p3 = `${px + uy*size - ux*size},${py - ux*size - uy*size}`;
+      const p2 = `${px - uy * size - ux * size},${py + ux * size - uy * size}`;
+      const p3 = `${px + uy * size - ux * size},${py - ux * size - uy * size}`;
       arrow.setAttribute('points', `${p1} ${p2} ${p3}`);
-      arrow.setAttribute('fill','#0f172a');
+      arrow.setAttribute('fill', '#0f172a');
       svg.appendChild(arrow);
     }
   });
 
-  // draw temp edge
-  if(tempEdge){
-    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-    line.setAttribute('x1',tempEdge.x1); line.setAttribute('y1',tempEdge.y1);
-    line.setAttribute('x2',tempEdge.x2); line.setAttribute('y2',tempEdge.y2);
-    line.setAttribute('stroke-dasharray','4');
-    line.setAttribute('stroke','#000');
+  // draw temp edge (while dragging)
+  if (tempEdge) {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', tempEdge.x1);
+    line.setAttribute('y1', tempEdge.y1);
+    line.setAttribute('x2', tempEdge.x2);
+    line.setAttribute('y2', tempEdge.y2);
+    line.setAttribute('stroke-dasharray', '4');
+    line.setAttribute('stroke', '#000');
+    line.setAttribute('stroke-width', '2');
     svg.appendChild(line);
   }
 
   // draw nodes
-  nodes.forEach(n=>{
-    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+  nodes.forEach(n => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.classList.add('node');
     g.setAttribute('transform', `translate(${n.x},${n.y})`);
     g.dataset.id = n.id;
-    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    c.setAttribute('r',20);
-    c.setAttribute('fill', n._active ? '#34d399' : '#60a5fa');
+    
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.setAttribute('r', 20);
+    c.setAttribute('fill', n._active ? '#34d399' : (selected === n.id ? '#fbbf24' : '#60a5fa'));
+    c.setAttribute('stroke', selected === n.id ? '#f59e0b' : '#0f172a');
+    c.setAttribute('stroke-width', selected === n.id ? '3' : '1.5');
     g.appendChild(c);
-    const text = document.createElementNS('http://www.w3.org/2000/svg','text');
-    text.setAttribute('x',0); text.setAttribute('y',5); text.setAttribute('text-anchor','middle');
+    
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', 0);
+    text.setAttribute('y', 5);
+    text.setAttribute('text-anchor', 'middle');
     text.textContent = n.id;
     g.appendChild(text);
 
     // remove button (small)
-    const remove = document.createElementNS('http://www.w3.org/2000/svg','text');
-    remove.setAttribute('x',18); remove.setAttribute('y',30);
-    remove.setAttribute('font-size',12); remove.setAttribute('text-anchor','end');
-    remove.setAttribute('fill','#ef4444');
+    const remove = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    remove.setAttribute('x', 18);
+    remove.setAttribute('y', 30);
+    remove.setAttribute('font-size', 12);
+    remove.setAttribute('text-anchor', 'end');
+    remove.setAttribute('fill', '#ef4444');
+    remove.setAttribute('class', 'remove-btn');
     remove.textContent = '✕';
     remove.style.cursor = 'pointer';
-    remove.addEventListener('click', (ev)=>{
+    remove.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      removeNode(n.id);
+      if (confirm(`Remove node ${n.id} and all connected edges?`)) {
+        removeNode(n.id);
+      }
     });
     g.appendChild(remove);
 
-    // events
-    g.addEventListener('mousedown', (ev)=>{
+    // node events
+    g.addEventListener('mousedown', (ev) => {
       ev.stopPropagation();
-      if(mode==='add-edge'){
-        tempEdge = {fromId:n.id, x1:n.x, y1:n.y, x2:n.x, y2:n.y};
-      } else if(mode==='select'){
+      if (mode === 'add-edge') {
+        tempEdge = { fromId: n.id, x1: n.x, y1: n.y, x2: n.x, y2: n.y };
+      } else if (mode === 'select') {
         selected = n.id;
         updateSelected();
+        redraw();
       }
     });
-    g.addEventListener('mouseup', (ev)=>{
+    
+    g.addEventListener('mouseup', (ev) => {
       ev.stopPropagation();
-      if(mode==='add-edge' && tempEdge){
+      if (mode === 'add-edge' && tempEdge) {
         const toId = n.id;
-        if(tempEdge.fromId !== toId){
+        if (tempEdge.fromId !== toId) {
+          const existingEdge = edges.find(e =>
+            (e.from === tempEdge.fromId && e.to === toId) ||
+            (!e.directed && e.from === toId && e.to === tempEdge.fromId)
+          );
+          
+          if (existingEdge && !confirm('Edge already exists. Replace?')) {
+            tempEdge = null;
+            redraw();
+            return;
+          }
+          
           const w = weighted ? Number(prompt('Capacity / weight (number):', '1')) || 1 : 1;
-          addEdge(tempEdge.fromId, toId, w, directed);
+          if (!isNaN(w) && w > 0) {
+            addEdge(tempEdge.fromId, toId, w, directed);
+          } else {
+            alert('Invalid weight. Must be a positive number.');
+          }
         }
       }
       tempEdge = null;
       redraw();
+    });
+
+    // Make nodes draggable in select mode
+    let isDragging = false;
+    let dragStartX, dragStartY;
+    
+    g.addEventListener('mousedown', (ev) => {
+      if (mode === 'select') {
+        isDragging = true;
+        dragStartX = ev.clientX - n.x;
+        dragStartY = ev.clientY - n.y;
+        selected = n.id;
+        updateSelected();
+        redraw();
+      }
+    });
+    
+    document.addEventListener('mousemove', (ev) => {
+      if (isDragging && selected === n.id) {
+        n.x = ev.clientX - dragStartX;
+        n.y = ev.clientY - dragStartY;
+        redraw();
+      }
+    });
+    
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
     });
 
     svg.appendChild(g);
@@ -160,8 +258,9 @@ function redraw(){
   updateStartSelect();
 }
 
-svg.addEventListener('mousemove', (ev)=>{
-  if(tempEdge){
+// Event listeners for SVG
+svg.addEventListener('mousemove', (ev) => {
+  if (tempEdge) {
     const rect = svg.getBoundingClientRect();
     tempEdge.x2 = ev.clientX - rect.left;
     tempEdge.y2 = ev.clientY - rect.top;
@@ -169,343 +268,707 @@ svg.addEventListener('mousemove', (ev)=>{
   }
 });
 
-svg.addEventListener('click', (ev)=>{
+svg.addEventListener('click', (ev) => {
   const rect = svg.getBoundingClientRect();
   const x = ev.clientX - rect.left;
   const y = ev.clientY - rect.top;
-  if(mode==='add-node'){
-    addNode(x,y);
-  } else {
-    selected = null; updateSelected();
+  
+  // Check if click is on existing node
+  const clickedNode = nodes.find(n => {
+    const dx = n.x - x;
+    const dy = n.y - y;
+    return Math.sqrt(dx * dx + dy * dy) <= 20;
+  });
+  
+  if (mode === 'add-node' && !clickedNode) {
+    addNode(x, y);
+  } else if (mode !== 'add-edge') {
+    selected = null;
+    updateSelected();
+    redraw();
   }
 });
 
-function addNode(x,y){
+// Graph operations
+function addNode(x, y) {
   const nid = idNode();
-  nodes.push({id:nid,x, y});
+  nodes.push({ id: nid, x, y });
   redraw();
 }
-function removeNode(id){
-  nodes = nodes.filter(n=>n.id!==id);
-  edges = edges.filter(e=>e.from!==id && e.to!==id);
+
+function removeNode(id) {
+  nodes = nodes.filter(n => n.id !== id);
+  edges = edges.filter(e => e.from !== id && e.to !== id);
+  selected = null;
+  updateSelected();
   redraw();
 }
-function addEdge(from,to,weight=1,isDirected=false){
+
+function addEdge(from, to, weight = 1, isDirected = false) {
+  // Remove existing edge first
+  edges = edges.filter(e =>
+    !((e.from === from && e.to === to) ||
+      (!e.directed && e.from === to && e.to === from))
+  );
+  
   const eid = idEdge();
-  edges.push({id:eid,from,to,weight:weight,directed:isDirected,flow:0});
-  redraw();
-}
-function removeEdge(id){
-  edges = edges.filter(e=>e.id!==id);
+  edges.push({
+    id: eid,
+    from,
+    to,
+    weight: weight,
+    directed: isDirected,
+    flow: 0
+  });
   redraw();
 }
 
-modeAddNodeBtn.addEventListener('click', ()=>{ setMode('add-node'); });
-modeAddEdgeBtn.addEventListener('click', ()=>{ setMode('add-edge'); });
-modeSelectBtn.addEventListener('click', ()=>{ setMode('select'); });
-directedChk.addEventListener('change', ()=>{ directed = directedChk.checked; });
-weightedChk.addEventListener('change', ()=>{ weighted = weightedChk.checked; });
-clearBtn.addEventListener('click', ()=>{ nodes=[]; edges=[]; nodeCounter=0; edgeCounter=0; redraw(); });
+function clearGraph() {
+  nodes = [];
+  edges = [];
+  nodeCounter = 0;
+  edgeCounter = 0;
+  selected = null;
+  tempEdge = null;
+  clearHighlights();
+  output.innerHTML = '';
+  updateSelected();
+  
+  if (visualizationInterval) {
+    clearInterval(visualizationInterval);
+    visualizationInterval = null;
+  }
+  
+  redraw();
+}
 
-exportBtn.addEventListener('click', ()=>{
-  const payload = {directed, nodes, edges};
-  const blob = new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'graph.json'; a.click();
+// UI event handlers
+modeAddNodeBtn.addEventListener('click', () => { setMode('add-node'); });
+modeAddEdgeBtn.addEventListener('click', () => { setMode('add-edge'); });
+modeSelectBtn.addEventListener('click', () => { setMode('select'); });
+
+directedChk.addEventListener('change', () => {
+  directed = directedChk.checked;
+  // Update existing edges
+  edges.forEach(e => e.directed = directed);
+  redraw();
 });
 
-importFile.addEventListener('change', (ev)=>{
-  const f = ev.target.files[0]; if(!f) return;
+weightedChk.addEventListener('change', () => {
+  weighted = weightedChk.checked;
+  redraw();
+});
+
+clearBtn.addEventListener('click', () => {
+  if (nodes.length > 0 && confirm('Clear the entire graph?')) {
+    clearGraph();
+  }
+});
+
+exportBtn.addEventListener('click', () => {
+  const payload = {
+    directed,
+    weighted,
+    nodes: nodes.map(n => ({ id: n.id, x: n.x, y: n.y })),
+    edges: edges.map(e => ({
+      id: e.id,
+      from: e.from,
+      to: e.to,
+      weight: e.weight,
+      directed: e.directed,
+      flow: e.flow || 0
+    }))
+  };
+  
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'graph.json';
+  a.click();
+});
+
+importFile.addEventListener('change', (ev) => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  
   const reader = new FileReader();
-  reader.onload = e=>{
-    try{
+  reader.onload = e => {
+    try {
       const parsed = JSON.parse(e.target.result);
       directed = !!parsed.directed;
+      weighted = !!parsed.weighted;
       directedChk.checked = directed;
+      weightedChk.checked = weighted;
+      
       nodes = parsed.nodes || [];
       edges = parsed.edges || [];
-      // reset counters to avoid id clash
-      nodeCounter = nodes.length; edgeCounter = edges.length;
+      
+      // Reset counters
+      nodeCounter = nodes.length;
+      edgeCounter = edges.length;
+      
+      // Reset state
+      selected = null;
+      tempEdge = null;
+      clearHighlights();
+      updateSelected();
+      
       redraw();
-    }catch(err){ alert('Invalid JSON'); }
+      output.innerHTML = '<div class="info">Graph imported successfully</div>';
+    } catch (err) {
+      alert('Invalid JSON file format');
+    }
   };
   reader.readAsText(f);
+  importFile.value = ''; // Reset file input
 });
 
-// UI mode toggle
-function setMode(m){
+function setMode(m) {
   mode = m;
-  modeAddNodeBtn.classList.toggle('active', m==='add-node');
-  modeAddEdgeBtn.classList.toggle('active', m==='add-edge');
-  modeSelectBtn.classList.toggle('active', m==='select');
+  modeAddNodeBtn.classList.toggle('active', m === 'add-node');
+  modeAddEdgeBtn.classList.toggle('active', m === 'add-edge');
+  modeSelectBtn.classList.toggle('active', m === 'select');
+  
+  // Clear temp edge when switching modes
+  if (m !== 'add-edge') {
+    tempEdge = null;
+  }
 }
 
-// update selection panel
-function updateStartSelect(){
+function updateStartSelect() {
   startSelect.innerHTML = '<option value="">-- select --</option>';
-  nodes.forEach(n=> {
-    const o = document.createElement('option'); o.value = n.id; o.textContent = n.id;
+  nodes.forEach(n => {
+    const o = document.createElement('option');
+    o.value = n.id;
+    o.textContent = n.id;
     startSelect.appendChild(o);
   });
 }
-function updateSelected(){
+
+function updateSelected() {
   selectedInfo.textContent = selected || 'none';
 }
 
-// Build adjacency list (for algorithms)
-function buildAdjList(){
+// Graph algorithms
+function buildAdjList() {
   const adj = {};
-  nodes.forEach(n=> adj[n.id]=[]);
-  edges.forEach(e=>{
-    adj[e.from].push({to:e.to, w:e.weight, id:e.id});
-    if(!e.directed) adj[e.to].push({to:e.from, w:e.weight, id:e.id});
+  nodes.forEach(n => adj[n.id] = []);
+  edges.forEach(e => {
+    adj[e.from].push({ to: e.to, w: e.weight || 1, id: e.id });
+    if (!e.directed) {
+      adj[e.to].push({ to: e.from, w: e.weight || 1, id: e.id });
+    }
   });
   return adj;
 }
 
-// BFS (visual step-by-step)
-function bfs(start){
-  if(!start){ alert('Choose start'); return; }
+function bfs(start) {
+  if (!start) { alert('Choose start node'); return; }
+  
+  clearHighlights();
   const adj = buildAdjList();
-  const q = [start], visited = new Set([start]), order=[];
-  while(q.length){
-    const u = q.shift(); order.push(u);
-    for(const nb of adj[u]){
-      if(!visited.has(nb.to)){ visited.add(nb.to); q.push(nb.to); }
+  const queue = [start];
+  const visited = new Set([start]);
+  const order = [];
+  
+  while (queue.length) {
+    const current = queue.shift();
+    order.push(current);
+    
+    for (const neighbor of adj[current]) {
+      if (!visited.has(neighbor.to)) {
+        visited.add(neighbor.to);
+        queue.push(neighbor.to);
+      }
     }
   }
-  visualizeOrder(order);
+  
+  visualizeOrder(order, 'BFS');
 }
 
-// DFS
-function dfs(start){
-  if(!start){ alert('Choose start'); return; }
+function dfs(start) {
+  if (!start) { alert('Choose start node'); return; }
+  
+  clearHighlights();
   const adj = buildAdjList();
-  const visited = new Set(), order=[];
-  function dfsRec(u){
-    visited.add(u); order.push(u);
-    for(const nb of adj[u]) if(!visited.has(nb.to)) dfsRec(nb.to);
+  const visited = new Set();
+  const order = [];
+  
+  function dfsVisit(node) {
+    visited.add(node);
+    order.push(node);
+    
+    for (const neighbor of adj[node]) {
+      if (!visited.has(neighbor.to)) {
+        dfsVisit(neighbor.to);
+      }
+    }
   }
-  dfsRec(start);
-  visualizeOrder(order);
+  
+  dfsVisit(start);
+  visualizeOrder(order, 'DFS');
 }
 
-// visualize a sequence of node ids (highlight each node step-by-step)
-function visualizeOrder(order){
-  // clear highlights
-  nodes.forEach(n=> n._active=false);
-  edges.forEach(e=> e._highlight=false);
-  redraw();
-  let i=0;
-  const t = setInterval(()=>{
-    nodes.forEach(n=> n._active=false);
-    const nid = order[i];
-    const node = nodes.find(n=>n.id===nid);
-    if(node) node._active = true;
-    // highlight edges between consecutive nodes
-    edges.forEach(e=> e._highlight=false);
-    if(i>0){
-      const prev = order[i-1], cur = order[i];
-      const ee = edges.find(e=> (e.from===prev && e.to===cur) || (!e.directed && e.from===cur && e.to===prev) || (e.from===cur && e.to===prev));
-      if(ee) ee._highlight = true;
+function visualizeOrder(order, algorithm = '') {
+  clearHighlights();
+  
+  let i = 0;
+  output.innerHTML = `<div class="info">${algorithm}: ${order.join(' → ')}</div>`;
+  
+  visualizationInterval = setInterval(() => {
+    // Clear previous highlight
+    if (i > 0) {
+      const prevNode = nodes.find(n => n.id === order[i - 1]);
+      if (prevNode) prevNode._active = false;
     }
-    redraw();
-    i++;
-    if(i>=order.length){ clearInterval(t); setTimeout(()=>{ nodes.forEach(n=> n._active=false); edges.forEach(e=> e._highlight=false); redraw(); }, 1000); }
+    
+    // Highlight current node
+    if (i < order.length) {
+      const currentNode = nodes.find(n => n.id === order[i]);
+      if (currentNode) currentNode._active = true;
+      
+      // Highlight edge from previous to current
+      if (i > 0) {
+        const prev = order[i - 1];
+        const curr = order[i];
+        const edge = edges.find(e =>
+          (e.from === prev && e.to === curr) ||
+          (!e.directed && e.from === curr && e.to === prev)
+        );
+        if (edge) edge._highlight = true;
+      }
+      
+      redraw();
+      i++;
+    }
+    
+    if (i >= order.length) {
+      clearInterval(visualizationInterval);
+      visualizationInterval = null;
+      setTimeout(() => {
+        clearHighlights();
+        redraw();
+        output.innerHTML += '<div class="info">Visualization complete</div>';
+      }, 1000);
+    }
   }, 600);
 }
 
-// Dijkstra
-function dijkstra(start, target){
-  if(!start || !target){ alert('Choose start & target'); return; }
-  // init
+function dijkstra(start, target) {
+  if (!start || !target) {
+    alert('Choose start and target nodes');
+    return;
+  }
+  
+  if (start === target) {
+    alert('Start and target are the same');
+    return;
+  }
+  
+  clearHighlights();
   const adj = buildAdjList();
-  const dist = {}; const prev = {};
-  nodes.forEach(n=> { dist[n.id]=Infinity; prev[n.id]=null; });
-  dist[start]=0;
-  const Q = new Set(nodes.map(n=>n.id));
-  while(Q.size){
-    // extract min
-    let u=null, best=Infinity;
-    for(const v of Q) if(dist[v]<best){ best=dist[v]; u=v; }
-    if(u===null) break;
-    Q.delete(u);
-    for(const nb of adj[u]){
-      const nd = dist[u] + (nb.w||1);
-      if(nd < dist[nb.to]){ dist[nb.to]=nd; prev[nb.to]=u; }
+  
+  // Initialize distances and previous nodes
+  const dist = {};
+  const prev = {};
+  const unvisited = new Set();
+  
+  nodes.forEach(n => {
+    dist[n.id] = Infinity;
+    prev[n.id] = null;
+    unvisited.add(n.id);
+  });
+  
+  dist[start] = 0;
+  
+  while (unvisited.size > 0) {
+    // Find unvisited node with smallest distance
+    let current = null;
+    let minDist = Infinity;
+    
+    for (const node of unvisited) {
+      if (dist[node] < minDist) {
+        minDist = dist[node];
+        current = node;
+      }
     }
-  }
-  if(dist[target]===Infinity){ alert('No path'); return; }
-  // build path
-  const path=[];
-  let cur = target;
-  while(cur){ path.push(cur); cur = prev[cur]; }
-  path.reverse();
-  // highlight path
-  edges.forEach(e=> e._highlight=false);
-  for(let i=0;i<path.length-1;i++){
-    const a=path[i], b=path[i+1];
-    const ee = edges.find(e=> (e.from===a && e.to===b) || (!e.directed && e.from===b && e.to===a));
-    if(ee) ee._highlight = true;
-  }
-  nodes.forEach(n=> n._active=false);
-  path.forEach(id=> { const nn = nodes.find(x=>x.id===id); if(nn) nn._active=true; });
-  redraw();
-  output.innerHTML = `<div class="info">Distance ${dist[target]} &nbsp; Path: ${path.join(' → ')}</div>`;
-}
-
-// Bipartite check
-function checkBipartite(){
-  const adj = buildAdjList();
-  const color = {}; const q=[];
-  for(const s of Object.keys(adj)){
-    if(color[s]!==undefined) continue;
-    color[s]=0; q.push(s);
-    while(q.length){
-      const u=q.shift();
-      for(const nb of adj[u]){
-        if(color[nb.to]===undefined){ color[nb.to]=1-color[u]; q.push(nb.to); }
-        else if(color[nb.to]===color[u]){ alert('NOT bipartite'); return; }
+    
+    if (current === null || dist[current] === Infinity) {
+      break; // No path exists
+    }
+    
+    unvisited.delete(current);
+    
+    // Update distances to neighbors
+    for (const neighbor of adj[current]) {
+      const alt = dist[current] + neighbor.w;
+      if (alt < dist[neighbor.to]) {
+        dist[neighbor.to] = alt;
+        prev[neighbor.to] = current;
       }
     }
   }
-  alert('Graph is bipartite (2-colorable)');
-}
-
-// convert representations
-function showRepresentations(){
-  const adj = buildAdjList();
-  const nodesList = nodes.map(n=>n.id).join(', ');
-  let s = 'Adjacency list:\\n';
-  for(const k of Object.keys(adj)) s += `${k}: ${adj[k].map(x=>x.to + (x.w?`(${x.w})`:'' )).join(', ')}\\n`;
-  s += '\\nEdge list:\\n';
-  s += edges.map(e=> `${e.from} -> ${e.to} (${e.weight})`).join('\\n');
-  s += '\\n\\nAdjacency matrix (CSV-like):\\n';
-  s += ',' + nodes.map(n=>n.id).join(',') + '\\n';
-  const idx = {}; nodes.forEach((n,i)=>idx[n.id]=i);
-  for(const i in nodes){
-    const row = nodes.map(r=>0);
-    edges.forEach(e=>{
-      row[idx[e.to]] = idx[e.from]===Number(i) || e.from===nodes[i].id ? e.weight||1 : row[idx[e.to]];
-      // but for proper matrix we should set based on i,j - but keep simple
-    });
-    s += nodes[i].id + ',' + row.join(',') + '\\n';
+  
+  // Reconstruct path
+  const path = [];
+  let current = target;
+  
+  while (current !== null) {
+    path.unshift(current);
+    current = prev[current];
   }
-  alert(s);
+  
+  // Check if path exists
+  if (path[0] !== start) {
+    output.innerHTML = `<div class="info">No path from ${start} to ${target}</div>`;
+    return;
+  }
+  
+  // Highlight path
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i];
+    const b = path[i + 1];
+    
+    // Find and highlight edge
+    const edge = edges.find(e =>
+      (e.from === a && e.to === b) ||
+      (!e.directed && e.from === b && e.to === a)
+    );
+    
+    if (edge) {
+      edge._highlight = true;
+    }
+    
+    // Highlight nodes
+    const nodeA = nodes.find(n => n.id === a);
+    const nodeB = nodes.find(n => n.id === b);
+    if (nodeA) nodeA._active = true;
+    if (nodeB) nodeB._active = true;
+  }
+  
+  redraw();
+  output.innerHTML = `<div class="info">Dijkstra: Distance = ${dist[target]}, Path: ${path.join(' → ')}</div>`;
 }
 
-// Ford-Fulkerson (Edmonds-Karp) implementation (capacity from edge.weight)
-// We'll build residual graph and run BFS to find augmenting paths.
-// Final flows are stored in edges[].flow (non-negative, for directed we consider that direction)
-function fordFulkerson(source, sink){
-  if(!source || !sink){ alert('Choose start (source) and target (sink) from dropdown'); return; }
-  // build mapping from id to index
-  const nid = nodes.map(n=>n.id);
-  const n = nid.length;
-  const idx = {}; nid.forEach((id,i)=> idx[id]=i);
-  // adjacency with capacities
-  const capacity = Array.from({length:n}, ()=> Array(n).fill(0));
-  const adjList = Array.from({length:n}, ()=> new Set());
-  edges.forEach(e=>{
-    const u = idx[e.from], v = idx[e.to];
-    capacity[u][v] += Number(e.weight || 0);
-    adjList[u].add(v);
-    adjList[v].add(u);
-    // for undirected, represent as two directed edges with same capacity
-    if(!e.directed){
-      capacity[v][u] += Number(e.weight || 0);
-    }
-  });
-  // convert adjList sets to arrays
-  const adj = adjList.map(s=>Array.from(s));
-  // residual capacities copy
-  const residual = capacity.map(r=> r.slice());
-  // parent array for BFS
-  function bfsParent(){
-    const parent = Array(n).fill(-1);
-    const q = [];
-    q.push(idx[source]); parent[idx[source]] = -2;
-    const cap = Array(n).fill(0); cap[idx[source]] = Infinity;
-    while(q.length){
-      const u = q.shift();
-      for(const v of adj[u]){
-        if(parent[v]===-1 && residual[u][v] > 0){
-          parent[v] = u;
-          cap[v] = Math.min(cap[u], residual[u][v]);
-          if(v === idx[sink]) return {parent, flow: cap[v]};
-          q.push(v);
+function checkBipartite() {
+  clearHighlights();
+  const adj = buildAdjList();
+  const color = {};
+  let isBipartite = true;
+  
+  for (const node of nodes) {
+    if (color[node.id] !== undefined) continue;
+    
+    const queue = [node.id];
+    color[node.id] = 0;
+    
+    while (queue.length && isBipartite) {
+      const current = queue.shift();
+      
+      for (const neighbor of adj[current]) {
+        if (color[neighbor.to] === undefined) {
+          color[neighbor.to] = 1 - color[current];
+          queue.push(neighbor.to);
+        } else if (color[neighbor.to] === color[current]) {
+          isBipartite = false;
+          break;
         }
       }
     }
-    return null;
+    
+    if (!isBipartite) break;
   }
-  let maxflow = 0;
-  // initialize flows on edges to 0
-  edges.forEach(e=> e.flow = 0);
-  while(true){
-    const res = bfsParent();
-    if(!res) break;
-    const {parent, flow} = res;
-    maxflow += flow;
-    // update residual along path
-    let v = idx[sink];
-    while(v !== idx[source]){
+  
+  // Visualize coloring
+  nodes.forEach(n => {
+    if (color[n.id] === 0) {
+      n._active = true;
+    } else if (color[n.id] === 1) {
+      // Use different color for group 1
+      n._color = '#f472b6'; // pink
+    }
+  });
+  
+  redraw();
+  
+  if (isBipartite) {
+    output.innerHTML = '<div class="info">Graph is bipartite (2-colorable)</div>';
+  } else {
+    output.innerHTML = '<div class="info">Graph is NOT bipartite</div>';
+  }
+}
+
+function showRepresentations() {
+  const adj = buildAdjList();
+  let outputText = '';
+  
+  // Adjacency List
+  outputText += '=== Adjacency List ===\n';
+  for (const node in adj) {
+    const neighbors = adj[node].map(n => `${n.to}(${n.w})`).join(', ');
+    outputText += `${node}: ${neighbors}\n`;
+  }
+  
+  // Edge List
+  outputText += '\n=== Edge List ===\n';
+  edges.forEach(e => {
+    outputText += `${e.from} ${e.directed ? '→' : '--'} ${e.to} (${e.weight})\n`;
+  });
+  
+  // Adjacency Matrix
+  outputText += '\n=== Adjacency Matrix ===\n';
+  const nodeIds = nodes.map(n => n.id);
+  const indexMap = {};
+  nodeIds.forEach((id, i) => indexMap[id] = i);
+  
+  // Header
+  outputText += '   ' + nodeIds.join('  ') + '\n';
+  
+  // Matrix rows
+  for (let i = 0; i < nodeIds.length; i++) {
+    outputText += nodeIds[i] + '  ';
+    const row = [];
+    
+    for (let j = 0; j < nodeIds.length; j++) {
+      let value = 0;
+      const edge = edges.find(e =>
+        e.from === nodeIds[i] && e.to === nodeIds[j] ||
+        (!e.directed && e.from === nodeIds[j] && e.to === nodeIds[i])
+      );
+      
+      if (edge) {
+        value = edge.weight || 1;
+      }
+      
+      row.push(value.toString().padStart(2, ' '));
+    }
+    
+    outputText += row.join('  ') + '\n';
+  }
+  
+  // Show in modal instead of alert for better readability
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: white; padding: 20px; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    z-index: 1000; max-width: 80%; max-height: 80%; overflow: auto;
+    font-family: monospace; font-size: 12px; white-space: pre;
+  `;
+  
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'Close';
+  closeBtn.style.cssText = `
+    margin-top: 15px; padding: 8px 16px; background: #3b82f6; color: white;
+    border: none; border-radius: 4px; cursor: pointer; display: block; margin-left: auto;
+  `;
+  closeBtn.onclick = () => document.body.removeChild(modal);
+  
+  const text = document.createElement('div');
+  text.textContent = outputText;
+  
+  modal.appendChild(text);
+  modal.appendChild(closeBtn);
+  document.body.appendChild(modal);
+}
+
+function fordFulkerson(source, sink) {
+  if (!source || !sink) {
+    alert('Choose source and sink nodes');
+    return;
+  }
+  
+  if (source === sink) {
+    alert('Source and sink must be different');
+    return;
+  }
+  
+  clearHighlights();
+  
+  // Create index mapping
+  const nodeIndex = {};
+  nodes.forEach((n, i) => nodeIndex[n.id] = i);
+  const n = nodes.length;
+  
+  // Initialize capacity matrix
+  const capacity = Array(n).fill().map(() => Array(n).fill(0));
+  
+  // Fill capacity matrix
+  edges.forEach(e => {
+    const u = nodeIndex[e.from];
+    const v = nodeIndex[e.to];
+    capacity[u][v] += e.weight || 0;
+    
+    // For undirected edges, add reverse capacity
+    if (!e.directed) {
+      capacity[v][u] += e.weight || 0;
+    }
+  });
+  
+  // Edmonds-Karp implementation
+  const residual = capacity.map(row => [...row]);
+  const parent = Array(n).fill(-1);
+  let maxFlow = 0;
+  
+  function bfs() {
+    parent.fill(-1);
+    parent[nodeIndex[source]] = -2;
+    
+    const queue = [nodeIndex[source]];
+    
+    while (queue.length) {
+      const u = queue.shift();
+      
+      for (let v = 0; v < n; v++) {
+        if (parent[v] === -1 && residual[u][v] > 0) {
+          parent[v] = u;
+          if (v === nodeIndex[sink]) {
+            return true;
+          }
+          queue.push(v);
+        }
+      }
+    }
+    
+    return false;
+  }
+  
+  // Find augmenting paths
+  while (bfs()) {
+    // Find bottleneck
+    let pathFlow = Infinity;
+    let v = nodeIndex[sink];
+    
+    while (v !== nodeIndex[source]) {
       const u = parent[v];
-      residual[u][v] -= flow;
-      residual[v][u] += flow;
+      pathFlow = Math.min(pathFlow, residual[u][v]);
       v = u;
     }
+    
+    // Update residual capacities
+    v = nodeIndex[sink];
+    while (v !== nodeIndex[source]) {
+      const u = parent[v];
+      residual[u][v] -= pathFlow;
+      residual[v][u] += pathFlow;
+      v = u;
+    }
+    
+    maxFlow += pathFlow;
   }
-  // After maxflow computed, derive flows on original edges heuristically:
-  // For each original directed edge u->v, flow = original capacity - residual[u][v]
-  edges.forEach(e=>{
-    const u = idx[e.from], v = idx[e.to];
-    const orig = capacity[u][v];
-    const rem = residual[u][v];
-    e.flow = Math.max(0, orig - rem);
+  
+  // Calculate flow on each edge
+  edges.forEach(e => {
+    const u = nodeIndex[e.from];
+    const v = nodeIndex[e.to];
+    e.flow = Math.max(0, (e.weight || 0) - residual[u][v]);
+    
+    // Highlight edges with positive flow
+    if (e.flow > 0) {
+      e._highlight = true;
+    }
   });
-  // highlight edges with positive flow
-  edges.forEach(e=> e._highlight = e.flow>0);
+  
+  // Highlight source and sink
+  const sourceNode = nodes.find(n => n.id === source);
+  const sinkNode = nodes.find(n => n.id === sink);
+  if (sourceNode) sourceNode._active = true;
+  if (sinkNode) sinkNode._color = '#ef4444'; // red for sink
+  
   redraw();
-  output.innerHTML = `<div class="info">Max Flow (${source}→${sink}) = <strong>${maxflow}</strong></div>`;
+  output.innerHTML = `<div class="info">Ford-Fulkerson: Max Flow = ${maxFlow} (${source} → ${sink})</div>`;
 }
 
-// visualize helpers
-bfsBtn.addEventListener('click', ()=> bfs(startSelect.value));
-dfsBtn.addEventListener('click', ()=> dfs(startSelect.value));
-dijkstraBtn.addEventListener('click', ()=>{
-  const s = startSelect.value;
-  const t = prompt('Target node id (e.g. N2):','');
-  if(!s || !t) { alert('Need start & target'); return; }
-  dijkstra(s,t);
-});
-bipartiteBtn.addEventListener('click', ()=> checkBipartite());
-convBtn.addEventListener('click', ()=> showRepresentations());
-fordFulkBtn.addEventListener('click', ()=>{
-  const s = startSelect.value;
-  const t = prompt('Sink node id (target for max-flow):','');
-  if(!s || !t) return;
-  fordFulkerson(s,t);
+// Add CSS for edge labels
+const style = document.createElement('style');
+style.textContent = `
+  .edge-label {
+    font-size: 10px;
+    fill: #6b7280;
+    font-weight: bold;
+  }
+  .flow-label {
+    font-size: 9px;
+    fill: #10b981;
+    font-weight: bold;
+  }
+  .remove-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .node:hover .remove-btn {
+    opacity: 1;
+  }
+`;
+document.head.appendChild(style);
+
+// Algorithm button handlers
+bfsBtn.addEventListener('click', () => bfs(startSelect.value));
+dfsBtn.addEventListener('click', () => dfs(startSelect.value));
+
+dijkstraBtn.addEventListener('click', () => {
+  const source = startSelect.value;
+  if (!source) {
+    alert('Select a start node first');
+    return;
+  }
+  
+  const target = prompt('Enter target node ID:', '');
+  if (target) {
+    dijkstra(source, target);
+  }
 });
 
-// initial sample graph
-function loadSample(){
-  nodes = [{id:'N1',x:120,y:120},{id:'N2',x:320,y:100},{id:'N3',x:520,y:120},{id:'N4',x:220,y:320},{id:'N5',x:420,y:320}];
-  nodeCounter = nodes.length;
-  edges = [
-    {id:'E1',from:'N1',to:'N2',weight:16,directed:true,flow:0},
-    {id:'E2',from:'N1',to:'N3',weight:13,directed:true,flow:0},
-    {id:'E3',from:'N2',to:'N3',weight:10,directed:true,flow:0},
-    {id:'E4',from:'N3',to:'N2',weight:4,directed:true,flow:0},
-    {id:'E5',from:'N2',to:'N4',weight:12,directed:true,flow:0},
-    {id:'E6',from:'N3',to:'N5',weight:14,directed:true,flow:0},
-    {id:'E7',from:'N4',to:'N3',weight:9,directed:true,flow:0},
-    {id:'E8',from:'N4',to:'N5',weight:20,directed:true,flow:0},
-    {id:'E9',from:'N5',to:'N4',weight:7,directed:true,flow:0},
+bipartiteBtn.addEventListener('click', () => checkBipartite());
+convBtn.addEventListener('click', () => showRepresentations());
+
+fordFulkBtn.addEventListener('click', () => {
+  const source = startSelect.value;
+  if (!source) {
+    alert('Select a source node first');
+    return;
+  }
+  
+  const sink = prompt('Enter sink node ID:', '');
+  if (sink) {
+    fordFulkerson(source, sink);
+  }
+});
+
+// Load sample graph
+function loadSample() {
+  clearGraph();
+  
+  nodes = [
+    { id: 'N1', x: 120, y: 120 },
+    { id: 'N2', x: 320, y: 100 },
+    { id: 'N3', x: 520, y: 120 },
+    { id: 'N4', x: 220, y: 320 },
+    { id: 'N5', x: 420, y: 320 }
   ];
+  
+  nodeCounter = nodes.length;
+  
+  edges = [
+    { id: 'E1', from: 'N1', to: 'N2', weight: 16, directed: true, flow: 0 },
+    { id: 'E2', from: 'N1', to: 'N3', weight: 13, directed: true, flow: 0 },
+    { id: 'E3', from: 'N2', to: 'N3', weight: 10, directed: true, flow: 0 },
+    { id: 'E4', from: 'N3', to: 'N2', weight: 4, directed: true, flow: 0 },
+    { id: 'E5', from: 'N2', to: 'N4', weight: 12, directed: true, flow: 0 },
+    { id: 'E6', from: 'N3', to: 'N5', weight: 14, directed: true, flow: 0 },
+    { id: 'E7', from: 'N4', to: 'N3', weight: 9, directed: true, flow: 0 },
+    { id: 'E8', from: 'N4', to: 'N5', weight: 20, directed: true, flow: 0 },
+    { id: 'E9', from: 'N5', to: 'N4', weight: 7, directed: true, flow: 0 },
+  ];
+  
   edgeCounter = edges.length;
-  directed = true; directedChk.checked = true;
+  directed = true;
+  directedChk.checked = true;
+  weighted = true;
+  weightedChk.checked = true;
+  
   redraw();
-  output.innerHTML = '<div class="info">Loaded sample directed network (use N1 as source, N5 as sink for Ford-Fulkerson)</div>';
+  output.innerHTML = '<div class="info">Loaded sample network. Try Ford-Fulkerson with N1 as source and N5 as sink.</div>';
 }
+
+// Initialize
 loadSample();
-redraw();
