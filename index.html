@@ -1,57 +1,42 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="vi">
 <head>
-  <meta charset="utf-8" />
-  <title>Graph Visualizer (JS)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="style.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Tìm đường đi ngắn nhất trong Khuôn viên</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="app">
-    <header>
-      <h1>Graph Visualizer — JS (vanilla)</h1>
-      <div class="controls">
-        <button id="modeAddNode" class="active">Add Node</button>
-        <button id="modeAddEdge">Add Edge</button>
-        <button id="modeSelect">Select</button>
-        <label><input type="checkbox" id="directedChk"> Directed</label>
-        <label><input type="checkbox" id="weightedChk"> Weighted</label>
-        <button id="clearBtn">Clear</button>
-        <button id="exportBtn">Export JSON</button>
-        <input id="importFile" type="file" accept=".json" />
-      </div>
-    </header>
+    <div id="app-container">
+        <h1>🧭 Pathfinder Khuôn viên (Dijkstra)</h1>
 
-    <main>
-      <aside class="panel">
-        <div><strong>Selected:</strong> <span id="selectedInfo">none</span></div>
-        <hr/>
-        <div>
-          <label>Start for BFS/DFS/Dijkstra:</label>
-          <select id="startSelect"></select>
+        <div id="controls">
+            <label>Bắt đầu:</label>
+            <select id="start-node"></select>
+            <label>Kết thúc:</label>
+            <select id="end-node"></select>
+            <button onclick="findShortestPath()">Tìm đường (Dijkstra)</button>
+            <button onclick="runTraversal('BFS')">Duyệt BFS</button>
+            <button onclick="runTraversal('DFS')">Duyệt DFS</button>
+            <button onclick="checkBipartite()">Kiểm tra 2 phía</button>
+            <button onclick="downloadGraph()">Lưu bản đồ (JSON)</button>
         </div>
-        <div class="algos">
-          <button id="bfsBtn">BFS</button>
-          <button id="dfsBtn">DFS</button>
-          <button id="dijkstraBtn">Dijkstra</button>
-          <button id="bipartiteBtn">Check Bipartite</button>
-          <button id="convBtn">Show Representations</button>
-          <button id="fordFulkBtn">Ford-Fulkerson (max-flow)</button>
+
+        <canvas id="graphCanvas" width="800" height="500"></canvas>
+
+        <div id="info-panel">
+            <h3>Thông tin & Kết quả</h3>
+            <p id="path-result">Kết quả:</p>
+            <div id="representation-conversion">
+                <h4>Biểu diễn Đồ thị</h4>
+                <button onclick="displayAdjacencyMatrix()">Ma trận kề</button>
+                <button onclick="displayAdjacencyList()">Danh sách kề</button>
+                <button onclick="displayEdgeList()">Danh sách cạnh</button>
+                <pre id="conversion-output"></pre>
+            </div>
         </div>
-        <hr/>
-        <div id="output"></div>
-      </aside>
+    </div>
 
-      <section class="canvas-wrap">
-        <svg id="canvas" tabindex="0"></svg>
-      </section>
-    </main>
-
-    <footer>
-      <small>Click canvas to add node. In Add Edge mode: drag from a node to another node to add edge (you'll be prompted for weight/capacity if Weighted checked).</small>
-    </footer>
-  </div>
-
-  <script src="main.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>
