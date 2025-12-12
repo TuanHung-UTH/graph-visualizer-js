@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Graph Visualizer (Fixed)</title>
+<style>
+    body { font-family: Arial; margin:0; display:flex; height:100vh; }
+    #left { width:240px; padding:10px; border-right:1px solid #ddd; box-sizing:border-box; }
+    #canvas-wrap { flex:1; position:relative; background:#fafafa; }
+    canvas { background:#fff; width:100%; height:100%; display:block; }
+</style>
+</head>
+<body>
+<div id="left">
+<h3>Graph Visualizer</h3>
+<label>Mode:</label>
+<select id="mode">
+  <option value="addNode">Add Node</option>
+  <option value="addEdge">Add Edge</option>
+  <option value="select">Select/Move</option>
+</select>
+<label>Graph type:</label>
+<select id="directed">
+  <option value="false">Undirected</option>
+  <option value="true">Directed</option>
+</select>
+<label>Weight:</label>
+<input id="edgeWeight" type="number" value="1">
+<button id="clearBtn">Clear</button>
+<hr>
+<button id="bfsBtn">BFS</button>
+<button id="dfsBtn">DFS</button>
+<button id="dijkstraBtn">Dijkstra</button>
+<button id="kruskalBtn">Kruskal</button>
+<button id="hierholzerBtn">Hierholzer</button>
+<button id="fordBtn">Ford-Fulkerson</button>
+<hr>
+<button id="saveBtn">Save JSON</button>
+<button id="loadBtn">Load JSON</button>
+<input id="fileInput" type="file" style="display:none">
+</div>
+
+<div id="canvas-wrap"><canvas id="canvas"></canvas></div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const wrap   = document.getElementById("canvas-wrap");
+const ctx = canvas.getContext("2d");
+function resizeCanvas(){
+    const cssW = wrap.clientWidth;
+    const cssH = wrap.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = cssW * dpr;
+    canvas.height = cssH * dpr;
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    draw();
+}
+function clientToCanvas(e){
+    const r = canvas.getBoundingClientRect();
+    const d = window.devicePixelRatio || 1;
+    return { x:(e.clientX - r.left)*d, y:(e.clientY - r.top)*d };
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+let state = { nodes:[], edges:[], directed:false, nextEdgeId:1 };
+function addNodeAt(x,y){ state.nodes.push({id:"n"+(state.nodes.length+1),x,y,r:18}); draw(); }
+function nodeAt(x,y){ return state.nodes.find(n=> (n.x-x)**2+(n.y-y)**2 <= n.r*n.r ); }
+function addEdge(a,b,w){ state.edges.push({id:"e"+(state.nextEdgeId++),from:a,to:b,weight:+w}); draw(); }
+
+let dragging=null, creatingEdge=null;
+
+canvas.onmousedown = e=>{
+    const {x,y}=clientToCanvas(e);
+    const m=document.getElementById("mode").value;
+    if(m==="addNode") addNodeAt(x,y);
+    else if(m==="select"){
+        const n=nodeAt(x,y);
+        if(n) dragging={node:n,ox:x-n.x,oy:y-n.y};
+    } else if(m==="addEdge"){
+        const n=nodeAt(x,y);
+        if(n) creatingEdge={from:n,x,y};
+    }
+};
+canvas.onmousemove = e=>{
+    const {x,y}=clientToCanvas(e);
+    if(dragging){
+        dragging.node.x=x-dragging.ox;
+        dragging.node.y=y-dragging.oy;
+        draw();
+    }
+    if(creatingEdge){
+        creatingEdge.x=x; creatingEdge.y=y; draw();
+    }
+};
+canvas.onmouseup = e=>{
+    const {x,y}=clientToCanvas(e);
+    if(dragging) dragging=null;
+    if(creatingEdge){
+        const t=nodeAt(x,y);
+        if(t && t.id!==creatingEdge.from.id)
+            addEdge(creatingEdge.from.id,t.id,document.getElementById("edgeWeight").value);
+        creatingEdge=null; draw();
+    }
+};
+
+function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    state.edges.forEach(e=>{
+        const a=state.nodes.find(n=>n.id===e.from);
+        const b=state.nodes.find(n=>n.id===e.to);
+        if(!a||!b) return;
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+        const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+        ctx.fillText(e.weight,mx+4,my-4);
+    });
+    if(creatingEdge){
+        ctx.beginPath(); ctx.moveTo(creatingEdge.from.x,creatingEdge.from.y);
+        ctx.lineTo(creatingEdge.x,creatingEdge.y); ctx.stroke();
+    }
+    state.nodes.forEach(n=>{
+        ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+        ctx.fillStyle="#99ccff"; ctx.fill(); ctx.stroke();
+        ctx.fillStyle="#000"; ctx.fillText(n.id,n.x-5,n.y+5);
+    });
+}
+</script>
+</body>
+</html>
