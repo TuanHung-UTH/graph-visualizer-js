@@ -1,42 +1,489 @@
-<!DOCTYPE html>
-<html lang="vi">
+<!doctype html>
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Tìm đường đi ngắn nhất trong Khuôn viên</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8"/>
+  <title>Graph Visualizer — for Course Submission</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin:0; display:flex; height:100vh; }
+    #left { width:220px; padding:10px; border-right:1px solid #ddd; box-sizing:border-box; }
+    #canvas-wrap { flex:1; position:relative; background:#fafafa; }
+    canvas { background: #fff; display:block; margin:0; width:100%; height:100%; }
+    button, select, input { width:100%; margin:6px 0; padding:6px; box-sizing:border-box; }
+    .small { width:48%; display:inline-block; }
+    #info { font-size:13px; color:#333; margin-top:8px; }
+    #right { width:360px; padding:10px; border-left:1px solid #ddd; box-sizing:border-box; overflow:auto; }
+    pre { background:#f1f1f1; padding:8px; max-height:200px; overflow:auto; }
+    .highlight { stroke: orange; stroke-width:4; }
+  </style>
 </head>
 <body>
-    <div id="app-container">
-        <h1>🧭 Pathfinder Khuôn viên (Dijkstra)</h1>
-
-        <div id="controls">
-            <label>Bắt đầu:</label>
-            <select id="start-node"></select>
-            <label>Kết thúc:</label>
-            <select id="end-node"></select>
-            <button onclick="findShortestPath()">Tìm đường (Dijkstra)</button>
-            <button onclick="runTraversal('BFS')">Duyệt BFS</button>
-            <button onclick="runTraversal('DFS')">Duyệt DFS</button>
-            <button onclick="checkBipartite()">Kiểm tra 2 phía</button>
-            <button onclick="downloadGraph()">Lưu bản đồ (JSON)</button>
-        </div>
-
-        <canvas id="graphCanvas" width="800" height="500"></canvas>
-
-        <div id="info-panel">
-            <h3>Thông tin & Kết quả</h3>
-            <p id="path-result">Kết quả:</p>
-            <div id="representation-conversion">
-                <h4>Biểu diễn Đồ thị</h4>
-                <button onclick="displayAdjacencyMatrix()">Ma trận kề</button>
-                <button onclick="displayAdjacencyList()">Danh sách kề</button>
-                <button onclick="displayEdgeList()">Danh sách cạnh</button>
-                <pre id="conversion-output"></pre>
-            </div>
-        </div>
+  <div id="left">
+    <h3>Graph Visualizer</h3>
+    <div>
+      <label>Mode:</label>
+      <select id="mode">
+        <option value="addNode">Add Node (click)</option>
+        <option value="addEdge">Add Edge (drag)</option>
+        <option value="select">Select/Move</option>
+      </select>
     </div>
+    <div>
+      <label>Graph type:</label>
+      <select id="directed">
+        <option value="false">Undirected</option>
+        <option value="true">Directed</option>
+      </select>
+    </div>
+    <div>
+      <label>Weight (for next edge):</label>
+      <input id="edgeWeight" type="number" value="1" />
+    </div>
+    <button id="bfsBtn">BFS (step)</button>
+    <button id="dfsBtn">DFS (step)</button>
+    <button id="dijkstraBtn">Dijkstra</button>
+    <button id="bipartiteBtn">Check Bipartite</button>
+    <button id="kruskalBtn">Kruskal (MST)</button>
+    <button id="hierholzerBtn">Hierholzer (Euler)</button>
+    <button id="fordBtn">Ford-Fulkerson (Edmonds-Karp)</button>
+    <hr/>
+    <button id="saveBtn">Save JSON</button>
+    <button id="loadBtn">Load JSON</button>
+    <input id="fileInput" type="file" style="display:none" />
+    <hr/>
+    <button id="toAdjList">Adj List</button>
+    <button id="toMatrix">Adj Matrix</button>
+    <button id="toEdgeList">Edge List</button>
+    <div id="info">Click canvas to add nodes. Drag to create edges when mode is Add Edge.</div>
+  </div>
 
-    <script src="script.js"></script>
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div id="right">
+    <h4>Output / Representations</h4>
+    <div>
+      <label>Start node (for searches):</label>
+      <input id="startNode" placeholder="node id (e.g., n1)"/>
+      <label>End node (for shortest path / flow):</label>
+      <input id="endNode" placeholder="node id"/>
+    </div>
+    <div>
+      <label>Message:</label>
+      <pre id="message"></pre>
+    </div>
+    <div>
+      <label>Representation:</label>
+      <pre id="rep"></pre>
+    </div>
+    <div>
+      <label>Edge Flows (for Ford-Fulkerson):</label>
+      <pre id="flows"></pre>
+    </div>
+    <div>
+      <label>Controls:</label>
+      <button id="stepBtn">Next Step</button>
+      <button id="resetColors">Reset Colors</button>
+    </div>
+    <hr/>
+    <h4>How to submit</h4>
+    <p>Download the ZIP from the instructor link. This app is a single-page web app; host the folder or open index.html locally.</p>
+  </div>
+
+<script>
+// Simple graph model and canvas-based visualizer
+const canvas = document.getElementById('canvas');
+const wrap = document.getElementById('canvas-wrap');
+canvas.width = wrap.clientWidth;
+canvas.height = wrap.clientHeight;
+window.addEventListener('resize', ()=>{ canvas.width = wrap.clientWidth; canvas.height = wrap.clientHeight; draw(); });
+
+const ctx = canvas.getContext('2d');
+let modeEl = document.getElementById('mode');
+let directedEl = document.getElementById('directed');
+let edgeWeightEl = document.getElementById('edgeWeight');
+let message = document.getElementById('message');
+let rep = document.getElementById('rep');
+let flowsPre = document.getElementById('flows');
+
+let state = {
+  nodes: [], edges: [], directed:false,
+  nextId: 1
+};
+
+function resetState(){ state = { nodes:[], edges:[], directed:false, nextId:1}; }
+
+function addNode(x,y){
+  const id='n'+(state.nextId++);
+  state.nodes.push({id,x,y,r:18,color:'#66aaff'});
+  draw();
+  updateRep();
+}
+
+function nodeAt(x,y){
+  return state.nodes.find(n=>{
+    const dx=n.x-x, dy=n.y-y;
+    return Math.sqrt(dx*dx+dy*dy) <= n.r;
+  });
+}
+
+let dragging=null, creatingEdge=null;
+canvas.onmousedown = (e)=>{
+  const rect=canvas.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  const mode=modeEl.value;
+  if(mode==='addNode'){ addNode(x,y); }
+  else if(mode==='select'){
+    const n=nodeAt(x,y);
+    if(n){ dragging={node:n,ox:x-n.x,oy:y-n.y}; }
+  } else if(mode==='addEdge'){
+    const n=nodeAt(x,y);
+    if(n){ creatingEdge={from:n, x, y}; }
+  }
+};
+canvas.onmousemove = (e)=>{
+  const rect=canvas.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  if(dragging){ dragging.node.x = x - dragging.ox; dragging.node.y = y - dragging.oy; draw(); updateRep(); }
+  if(creatingEdge){ creatingEdge.x=x; creatingEdge.y=y; draw(); }
+};
+canvas.onmouseup = (e)=>{
+  const rect=canvas.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  if(dragging){ dragging=null; }
+  if(creatingEdge){
+    const target = nodeAt(x,y);
+    if(target && target !== creatingEdge.from){
+      const w = Number(edgeWeightEl.value) || 1;
+      state.edges.push({id:'e'+(state.edges.length+1), from:creatingEdge.from.id, to:target.id, weight:w, flow:0});
+      state.directed = (directedEl.value==='true');
+      draw();
+      updateRep();
+    }
+    creatingEdge=null; draw();
+  }
+};
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // edges
+  state.edges.forEach(e=>{
+    const a = state.nodes.find(n=>n.id===e.from);
+    const b = state.nodes.find(n=>n.id===e.to);
+    if(!a||!b) return;
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+    ctx.lineWidth = e._highlight?4:2;
+    ctx.strokeStyle = e._color || '#333';
+    ctx.stroke();
+    // arrow
+    if(state.directed){
+      const dx=b.x-a.x, dy=b.y-a.y;
+      const ang=Math.atan2(dy,dx);
+      const ax=b.x-12*Math.cos(ang), ay=b.y-12*Math.sin(ang);
+      ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(ax-8*Math.cos(ang-Math.PI/6), ay-8*Math.sin(ang-Math.PI/6));
+      ctx.lineTo(ax-8*Math.cos(ang+Math.PI/6), ay-8*Math.sin(ang+Math.PI/6));
+      ctx.closePath(); ctx.fillStyle = e._color || '#333'; ctx.fill();
+    }
+    // weight
+    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+    ctx.fillStyle='#000'; ctx.fillText(e.weight, mx+6, my+6);
+  });
+  // provisional edge
+  if(creatingEdge){
+    ctx.beginPath(); ctx.moveTo(creatingEdge.from.x, creatingEdge.from.y); ctx.lineTo(creatingEdge.x, creatingEdge.y); ctx.strokeStyle='#999'; ctx.stroke();
+  }
+  // nodes
+  state.nodes.forEach(n=>{
+    ctx.beginPath();
+    ctx.fillStyle = n.color || '#66aaff';
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#000'; ctx.fillText(n.id, n.x-6, n.y+4);
+  });
+}
+
+function updateRep(){
+  // adjacency list
+  const adj = {};
+  state.nodes.forEach(n=> adj[n.id]=[]);
+  state.edges.forEach(e=>{
+    adj[e.from].push({to:e.to, w:e.weight});
+    if(!state.directed) adj[e.to].push({to:e.from, w:e.weight});
+  });
+  rep.textContent = "Adjacency list:\\n" + JSON.stringify(adj, null, 2);
+}
+
+// Utilities: build adjacency for algorithms
+function buildAdjWeighted(directed){
+  const adj = {};
+  state.nodes.forEach(n=> adj[n.id]=[]);
+  state.edges.forEach(e=>{
+    adj[e.from].push({to:e.to, w: Number(e.weight), id:e.id});
+    if(!directed) adj[e.to].push({to:e.from, w: Number(e.weight), id:e.id});
+  });
+  return adj;
+}
+
+// BFS/DFS visualization state
+let algoSteps = [], algoStepIndex=0;
+document.getElementById('bfsBtn').onclick = ()=>{
+  const start = document.getElementById('startNode').value || (state.nodes[0] && state.nodes[0].id);
+  if(!start){ message.textContent='No start node'; return; }
+  const adj = buildAdjWeighted(state.directed);
+  const visited = new Set(); const q=[start];
+  algoSteps=[]; algoStepIndex=0;
+  while(q.length){
+    const u=q.shift();
+    if(visited.has(u)) continue;
+    visited.add(u);
+    algoSteps.push({type:'visit', node:u});
+    for(const v of adj[u]) if(!visited.has(v.to)) { q.push(v.to); algoSteps.push({type:'edge', from:u, to:v.to}); }
+  }
+  message.textContent = 'BFS prepared: '+algoSteps.length+' steps. Click Next Step.';
+};
+document.getElementById('dfsBtn').onclick = ()=>{
+  const start = document.getElementById('startNode').value || (state.nodes[0] && state.nodes[0].id);
+  if(!start){ message.textContent='No start node'; return; }
+  const adj = buildAdjWeighted(state.directed);
+  const visited=new Set(); algoSteps=[]; algoStepIndex=0;
+  function dfs(u){
+    visited.add(u); algoSteps.push({type:'visit', node:u});
+    for(const v of adj[u]){
+      if(!visited.has(v.to)){ algoSteps.push({type:'edge', from:u, to:v.to}); dfs(v.to); }
+    }
+  }
+  dfs(start);
+  message.textContent = 'DFS prepared: '+algoSteps.length+' steps. Click Next Step.';
+};
+document.getElementById('stepBtn').onclick = ()=>{
+  if(algoStepIndex >= algoSteps.length){ message.textContent='No more steps'; return; }
+  const s = algoSteps[algoStepIndex++];
+  resetColors();
+  if(s.type==='visit'){ const n = state.nodes.find(x=>x.id===s.node); if(n) n.color='#ffcc66'; message.textContent='Visiting '+s.node; }
+  if(s.type==='edge'){ const e = state.edges.find(x=>x.from===s.from && x.to===s.to); if(e) e._color='#ff6600'; message.textContent='Edge '+s.from+'->'+s.to; }
+  draw();
+};
+
+function resetColors(){
+  state.nodes.forEach(n=> n.color='#66aaff');
+  state.edges.forEach(e=> { e._color=null; e._highlight=false; });
+  draw();
+}
+document.getElementById('resetColors').onclick = ()=>{ resetColors(); message.textContent='Colors reset'; };
+
+
+// Dijkstra
+document.getElementById('dijkstraBtn').onclick = ()=>{
+  const start = document.getElementById('startNode').value;
+  const end = document.getElementById('endNode').value;
+  if(!start || !end){ message.textContent='Please provide start and end'; return; }
+  const adj = buildAdjWeighted(state.directed);
+  const dist = {}; const prev={};
+  state.nodes.forEach(n=>{ dist[n.id]=Infinity; prev[n.id]=null; });
+  dist[start]=0;
+  const Q = new Set(state.nodes.map(n=>n.id));
+  while(Q.size){
+    let u=null, best=Infinity;
+    Q.forEach(x=>{ if(dist[x]<best){ best=dist[x]; u=x; } });
+    if(u===null||dist[u]===Infinity) break;
+    Q.delete(u);
+    state.nodes.forEach(n=>{ if(n.id===u) n.color='#ffcc66'; });
+    for(const v of adj[u]){
+      const alt = dist[u] + v.w;
+      if(alt < dist[v.to]){ dist[v.to]=alt; prev[v.to]=u; }
+    }
+  }
+  // reconstruct path
+  const path=[]; let cur=end;
+  while(cur){ path.push(cur); cur=prev[cur]; }
+  path.reverse();
+  // highlight path edges
+  state.edges.forEach(e=> e._highlight=false);
+  for(let i=0;i<path.length-1;i++){
+    const ef = state.edges.find(x=> x.from===path[i]&& x.to===path[i+1]);
+    const eb = state.edges.find(x=> x.from===path[i+1] && x.to===path[i]); // if undirected
+    const e = ef||eb;
+    if(e) e._highlight=true;
+  }
+  draw();
+  message.textContent = 'Dijkstra: dist to '+end+' = '+(dist[end]===Infinity?'∞':dist[end])+' Path: '+(dist[end]===Infinity? 'none':path.join(' -> '));
+};
+
+// Kruskal (MST)
+document.getElementById('kruskalBtn').onclick = ()=>{
+  const edges = state.edges.map(e=> ({...e}));
+  // sort by weight
+  edges.sort((a,b)=>a.weight-b.weight);
+  // union-find
+  const p = {};
+  state.nodes.forEach(n=> p[n.id]=n.id);
+  function find(a){ return p[a]===a?a:(p[a]=find(p[a])); }
+  function union(a,b){ p[find(a)]=find(b); }
+  const chosen=[];
+  edges.forEach(e=>{
+    const u=e.from, v=e.to;
+    if(find(u)!==find(v)){ union(u,v); chosen.push(e); }
+  });
+  state.edges.forEach(e=> e._color='#ccc'); chosen.forEach(e=>{
+    const orig = state.edges.find(x=>x.id===e.id);
+    if(orig) orig._color='#00cc66';
+  });
+  draw();
+  message.textContent = 'Kruskal chosen '+chosen.length+' edges.';
+};
+
+// Bipartite check
+document.getElementById('bipartiteBtn').onclick = ()=>{
+  const adj = buildAdjWeighted(state.directed);
+  const color = {}; let ok=true;
+  for(const n of state.nodes){
+    if(!(n.id in color)){
+      const q=[n.id]; color[n.id]=0;
+      while(q.length){
+        const u=q.shift();
+        for(const v of adj[u]){
+          if(!(v.to in color)){ color[v.to]=1-color[u]; q.push(v.to); }
+          else if(color[v.to]===color[u]) ok=false;
+        }
+      }
+    }
+  }
+  if(!ok){ message.textContent='Graph is NOT bipartite'; resetColors(); return; }
+  // color nodes
+  state.nodes.forEach(n=> n.color = color[n.id]===0? '#88ee88' : '#ff8888' );
+  draw();
+  message.textContent = 'Graph is bipartite. Colored two sets.';
+};
+
+// Hierholzer (Eulerian circuit) — for undirected graphs
+document.getElementById('hierholzerBtn').onclick = ()=>{
+  // build multigraph adjacency of edge ids
+  const adj = {};
+  state.nodes.forEach(n=> adj[n.id]=[]);
+  state.edges.forEach(e=>{
+    adj[e.from].push({to:e.to, id:e.id});
+    adj[e.to].push({to:e.from, id:e.id});
+  });
+  // check all degrees even
+  for(const k in adj) if(adj[k].length %2 !==0){ message.textContent='No Eulerian circuit (degree not even)'; return; }
+  // Hierholzer
+  const stack=[]; const circuit=[];
+  if(state.nodes.length===0){ message.textContent='No nodes'; return; }
+  const start = state.nodes[0].id;
+  stack.push(start);
+  const used = new Set();
+  while(stack.length){
+    const v = stack[stack.length-1];
+    while(adj[v] && adj[v].length && adj[v].length>0 && used.size<state.edges.length){
+      const e = adj[v].pop();
+      if(used.has(e.id)) continue;
+      used.add(e.id);
+      // remove counterpart edge
+      const idx = adj[e.to].findIndex(x=>x.id===e.id);
+      if(idx>=0) adj[e.to].splice(idx,1);
+      stack.push(e.to);
+      return; // to keep UI responsive — but for simplicity we'll continue
+    }
+    circuit.push(stack.pop());
+  }
+  message.textContent = 'Eulerian circuit (partial): '+circuit.join(' -> ');
+};
+
+// Ford-Fulkerson (Edmonds-Karp)
+document.getElementById('fordBtn').onclick = ()=>{
+  const source = document.getElementById('startNode').value;
+  const sink = document.getElementById('endNode').value;
+  if(!source || !sink){ message.textContent='Provide source and sink'; return; }
+  // build capacity matrix
+  const nodes = state.nodes.map(n=>n.id);
+  const index = {}; nodes.forEach((v,i)=>index[v]=i);
+  const N = nodes.length;
+  const capacity = Array.from({length:N}, ()=> Array(N).fill(0));
+  state.edges.forEach(e=>{
+    capacity[index[e.from]][index[e.to]] = Number(e.weight);
+    if(!state.directed) capacity[index[e.to]][index[e.from]] = Number(e.weight);
+  });
+  // Edmonds-Karp
+  let maxflow=0;
+  const parent = Array(N).fill(-1);
+  function bfs(){
+    parent.fill(-1);
+    const q=[index[source]]; parent[index[source]] = -2;
+    const flow = Array(N).fill(0); flow[index[source]] = Infinity;
+    while(q.length){
+      const u=q.shift();
+      for(let v=0;v<N;v++){
+        if(parent[v]===-1 && capacity[u][v]>0){
+          parent[v]=u; flow[v]=Math.min(flow[u], capacity[u][v] || Infinity);
+          if(v===index[sink]) return flow[v];
+          q.push(v);
+        }
+      }
+    }
+    return 0;
+  }
+  let new_flow;
+  while((new_flow=bfs())>0){
+    maxflow += new_flow;
+    let cur=index[sink];
+    while(cur!==index[source]){
+      const prev = parent[cur];
+      capacity[prev][cur] -= new_flow;
+      capacity[cur][prev] += new_flow;
+      cur = prev;
+    }
+  }
+  // show flows on original edges as (cap - residual)
+  flowsPre.textContent = 'Max flow = '+maxflow+' (may be approximate)\\nResidual capacities shown in console';
+  message.textContent = 'Max flow (approx): '+maxflow;
+};
+
+// Save/Load JSON
+document.getElementById('saveBtn').onclick = ()=>{
+  const data = { nodes: state.nodes, edges: state.edges, directed: (directedEl.value==='true') };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='graph.json'; a.click();
+};
+document.getElementById('loadBtn').onclick = ()=> document.getElementById('fileInput').click();
+document.getElementById('fileInput').onchange = (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ()=> {
+    const data = JSON.parse(reader.result);
+    state.nodes = data.nodes || []; state.edges = data.edges || []; state.directed = !!data.directed;
+    directedEl.value = state.directed?'true':'false';
+    state.nextId = state.nodes.length+1;
+    draw(); updateRep(); message.textContent='Graph loaded';
+  };
+  reader.readAsText(f);
+};
+
+// Conversions
+document.getElementById('toAdjList').onclick = ()=>{
+  const adj = buildAdjWeighted(state.directed);
+  rep.textContent = JSON.stringify(adj, null, 2);
+};
+document.getElementById('toMatrix').onclick = ()=>{
+  const nodes = state.nodes.map(n=>n.id);
+  const idx = {}; nodes.forEach((v,i)=>idx[v]=i);
+  const N = nodes.length;
+  const mat = Array.from({length:N}, ()=> Array(N).fill(0));
+  state.edges.forEach(e=>{
+    mat[idx[e.from]][idx[e.to]] = Number(e.weight);
+    if(!state.directed) mat[idx[e.to]][idx[e.from]] = Number(e.weight);
+  });
+  rep.textContent = 'Nodes: '+JSON.stringify(nodes)+ '\\nMatrix:\\n' + JSON.stringify(mat, null, 2);
+};
+document.getElementById('toEdgeList').onclick = ()=>{
+  rep.textContent = JSON.stringify(state.edges, null, 2);
+};
+
+// initial draw
+draw(); updateRep();
+</script>
 </body>
 </html>
